@@ -181,6 +181,8 @@ func TestLocalMusicPageRendersSongListWithoutUnsupportedActions(t *testing.T) {
 	body := rec.Body.String()
 	required := []string{
 		`id="localMusicPageUploadInput"`,
+		`id="localMusicPageList"`,
+		`data-local-music-page="true"`,
 		`onchange="uploadLocalMusicForPage(this)"`,
 		`id="btn-batch-delete-local"`,
 		`onclick="batchDeleteLocalMusic()"`,

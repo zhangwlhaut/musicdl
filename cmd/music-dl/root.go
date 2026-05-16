@@ -6,6 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/guohuiyuan/go-music-dl/core"
 	"github.com/guohuiyuan/go-music-dl/internal/cli"
 )
 
@@ -58,7 +59,7 @@ var rootCmd = &cobra.Command{
   music-dl`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if showVersion {
-			fmt.Println("music-dl version v1.3.1 (TUI Version)")
+			fmt.Printf("music-dl version v%s (TUI Version)\n", core.AppVersion)
 			return
 		}
 

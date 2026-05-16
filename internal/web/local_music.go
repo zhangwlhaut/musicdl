@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dhowden/tag"
@@ -30,6 +31,7 @@ import (
 const (
 	localMusicSource       = "local"
 	legacyLocalMusicSource = "local-file"
+	localMusicScanCacheTTL = 10 * time.Second
 )
 
 var localMusicDownloadDirProvider = func() string {
@@ -48,6 +50,20 @@ var localMusicAudioExts = map[string]struct{}{
 
 var localMusicCoverExts = []string{".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 var localMusicLyricExts = []string{".lrc", ".txt", ".lyric"}
+var localMusicMetaCacheMu sync.RWMutex
+var localMusicMetaCache = make(map[string]*localMusicTrack)
+var localMusicScanCacheMu sync.RWMutex
+var localMusicScanCache localMusicScanSnapshot
+var localMusicScanRefreshMu sync.Mutex
+var localMusicScanRefreshInFlight bool
+
+type localMusicScanSnapshot struct {
+	Dir       string
+	Tracks    []*localMusicTrack
+	Exists    bool
+	Err       error
+	ScannedAt time.Time
+}
 
 type localMusicTrack struct {
 	ID           string            `json:"id"`
@@ -73,29 +89,42 @@ type localMusicTrack struct {
 
 func RegisterLocalMusicRoutes(api *gin.RouterGroup) {
 	api.GET("/local_music_page", func(c *gin.Context) {
-		tracks, _, exists, err := scanLocalMusicTracks()
 		errMsg := ""
-		if err != nil {
-			errMsg = "加载本地音乐失败: " + err.Error()
-		} else if !exists {
-			errMsg = "本地下载目录不存在，可上传音乐或在设置中调整下载目录"
+		tracks := []*localMusicTrack{}
+		if snapshot, ok := cachedLocalMusicScanSnapshot(localMusicDownloadDir(), false); ok {
+			tracks = snapshot.Tracks
+			if snapshot.Err != nil {
+				errMsg = "加载本地音乐失败: " + snapshot.Err.Error()
+			} else if !snapshot.Exists {
+				errMsg = "本地下载目录不存在，可上传音乐或在设置中调整下载目录"
+			}
 		}
 
 		renderIndex(c, localMusicTracksToSongs(tracks), nil, "", nil, errMsg, "local_music", "", "", "", false, "", nil)
 	})
 
 	api.GET("/local_music", func(c *gin.Context) {
-		tracks, dir, exists, err := scanLocalMusicTracks()
+		forceRefresh := c.Query("refresh") == "1" || c.Query("force") == "1"
+		tracks, dir, exists, err, refreshing, scannedAt := scanLocalMusicTracksCached(forceRefresh)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 
-		markAlreadyAddedLocalTracks(c.Query("collection_id"), tracks)
+		offset := parseLocalMusicRangeInt(c.Query("offset"), 0)
+		limit := parseLocalMusicRangeInt(c.Query("limit"), 0)
+		pageTracks := paginateLocalMusicTracks(tracks, offset, limit)
+		markAlreadyAddedLocalTracks(c.Query("collection_id"), pageTracks)
 		c.JSON(http.StatusOK, gin.H{
 			"download_dir": filepath.ToSlash(dir),
 			"exists":       exists,
-			"tracks":       tracks,
+			"tracks":       pageTracks,
+			"total":        len(tracks),
+			"offset":       offset,
+			"limit":        limit,
+			"has_more":     offset+len(pageTracks) < len(tracks),
+			"refreshing":   refreshing,
+			"scanned_at":   scannedAt,
 		})
 	})
 
@@ -262,7 +291,7 @@ func scanLocalMusicTracks() ([]*localMusicTrack, string, bool, error) {
 			return nil
 		}
 
-		track, err := buildLocalMusicTrack(rootAbs, path)
+		track, err := buildLocalMusicTrackFast(rootAbs, path)
 		if err == nil {
 			tracks = append(tracks, track)
 		}
@@ -280,6 +309,114 @@ func scanLocalMusicTracks() ([]*localMusicTrack, string, bool, error) {
 	})
 
 	return tracks, dir, true, nil
+}
+
+func scanLocalMusicTracksCached(force bool) ([]*localMusicTrack, string, bool, error, bool, time.Time) {
+	dir := localMusicDownloadDir()
+	if !force {
+		if snapshot, ok := cachedLocalMusicScanSnapshot(dir, false); ok {
+			if time.Since(snapshot.ScannedAt) < localMusicScanCacheTTL {
+				return snapshot.Tracks, snapshot.Dir, snapshot.Exists, snapshot.Err, false, snapshot.ScannedAt
+			}
+			if snapshot.Err == nil {
+				refreshLocalMusicScanAsync(dir)
+				return snapshot.Tracks, snapshot.Dir, snapshot.Exists, snapshot.Err, true, snapshot.ScannedAt
+			}
+		}
+	}
+
+	tracks, scanDir, exists, err := scanLocalMusicTracks()
+	snapshot := localMusicScanSnapshot{
+		Dir:       scanDir,
+		Tracks:    cloneLocalMusicTrackSlice(tracks),
+		Exists:    exists,
+		Err:       err,
+		ScannedAt: time.Now(),
+	}
+	storeLocalMusicScanSnapshot(snapshot)
+	return cloneLocalMusicTrackSlice(tracks), scanDir, exists, err, false, snapshot.ScannedAt
+}
+
+func refreshLocalMusicScanAsync(dir string) {
+	localMusicScanRefreshMu.Lock()
+	if localMusicScanRefreshInFlight {
+		localMusicScanRefreshMu.Unlock()
+		return
+	}
+	localMusicScanRefreshInFlight = true
+	localMusicScanRefreshMu.Unlock()
+
+	go func() {
+		defer func() {
+			localMusicScanRefreshMu.Lock()
+			localMusicScanRefreshInFlight = false
+			localMusicScanRefreshMu.Unlock()
+		}()
+
+		tracks, scanDir, exists, err := scanLocalMusicTracks()
+		if filepath.Clean(scanDir) != filepath.Clean(dir) {
+			return
+		}
+		storeLocalMusicScanSnapshot(localMusicScanSnapshot{
+			Dir:       scanDir,
+			Tracks:    cloneLocalMusicTrackSlice(tracks),
+			Exists:    exists,
+			Err:       err,
+			ScannedAt: time.Now(),
+		})
+	}()
+}
+
+func cachedLocalMusicScanSnapshot(dir string, freshOnly bool) (localMusicScanSnapshot, bool) {
+	localMusicScanCacheMu.RLock()
+	snapshot := localMusicScanCache
+	localMusicScanCacheMu.RUnlock()
+
+	if strings.TrimSpace(snapshot.Dir) == "" || filepath.Clean(snapshot.Dir) != filepath.Clean(dir) {
+		return localMusicScanSnapshot{}, false
+	}
+	if freshOnly && time.Since(snapshot.ScannedAt) >= localMusicScanCacheTTL {
+		return localMusicScanSnapshot{}, false
+	}
+	snapshot.Tracks = cloneLocalMusicTrackSlice(snapshot.Tracks)
+	return snapshot, true
+}
+
+func storeLocalMusicScanSnapshot(snapshot localMusicScanSnapshot) {
+	snapshot.Tracks = cloneLocalMusicTrackSlice(snapshot.Tracks)
+	localMusicScanCacheMu.Lock()
+	localMusicScanCache = snapshot
+	localMusicScanCacheMu.Unlock()
+}
+
+func invalidateLocalMusicScanCache() {
+	localMusicScanCacheMu.Lock()
+	localMusicScanCache = localMusicScanSnapshot{}
+	localMusicScanCacheMu.Unlock()
+}
+
+func parseLocalMusicRangeInt(raw string, fallback int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || value < 0 {
+		return fallback
+	}
+	if value > 1000 {
+		return 1000
+	}
+	return value
+}
+
+func paginateLocalMusicTracks(tracks []*localMusicTrack, offset int, limit int) []*localMusicTrack {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(tracks) {
+		return []*localMusicTrack{}
+	}
+	if limit <= 0 || offset+limit > len(tracks) {
+		limit = len(tracks) - offset
+	}
+	return tracks[offset : offset+limit]
 }
 
 func markAlreadyAddedLocalTracks(collectionID string, tracks []*localMusicTrack) {
@@ -329,6 +466,86 @@ func isLocalMusicAudioFile(path string) bool {
 	return ok
 }
 
+func buildLocalMusicTrackFast(rootAbs string, audioPath string) (*localMusicTrack, error) {
+	track, err := buildLocalMusicTrackFallback(rootAbs, audioPath)
+	if err != nil {
+		return nil, err
+	}
+	if cached := getCachedLocalMusicTrack(rootAbs, track.RelPath, track.Size, track.modTime); cached != nil {
+		cached.absPath = track.absPath
+		cached.modTime = track.modTime
+		return cached, nil
+	}
+	return track, nil
+}
+
+func buildLocalMusicTrackFallback(rootAbs string, audioPath string) (*localMusicTrack, error) {
+	absPath, err := filepath.Abs(audioPath)
+	if err != nil {
+		return nil, err
+	}
+	if !isPathInside(rootAbs, absPath) {
+		return nil, errors.New("path is outside local music dir")
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() || !isLocalMusicAudioFile(absPath) {
+		return nil, errors.New("not a supported audio file")
+	}
+
+	rel, err := filepath.Rel(rootAbs, absPath)
+	if err != nil {
+		return nil, err
+	}
+	rel = filepath.ToSlash(rel)
+
+	filename := info.Name()
+	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(filename)), ".")
+	fallbackName := strings.TrimSuffix(filename, filepath.Ext(filename))
+	id := encodeLocalMusicID(rel)
+	extra := map[string]string{
+		"local_music": "true",
+		"file_id":     id,
+		"filename":    filename,
+		"rel_path":    rel,
+		"ext":         ext,
+		"size":        strconv.FormatInt(info.Size(), 10),
+	}
+	cover := ""
+	if _, _, ok := localMusicExactSidecarFile(absPath, localMusicCoverExts); ok {
+		cover = RoutePrefix + "/local_music/cover?id=" + url.QueryEscape(id)
+		extra["cover"] = "true"
+		extra["cover_source"] = "sidecar"
+	}
+	if _, _, ok := localMusicExactSidecarFile(absPath, localMusicLyricExts); ok {
+		extra["lyric"] = "true"
+		extra["lyric_source"] = "sidecar"
+	}
+
+	return &localMusicTrack{
+		ID:         id,
+		Source:     localMusicSource,
+		Name:       strings.TrimSpace(fallbackName),
+		Artist:     "未知歌手",
+		Album:      "",
+		Cover:      cover,
+		Duration:   0,
+		Filename:   filename,
+		RelPath:    rel,
+		Ext:        ext,
+		Size:       info.Size(),
+		SizeText:   core.FormatSize(info.Size()),
+		ModifiedAt: info.ModTime(),
+		Missing:    []string{"title", "artist", "album"},
+		Extra:      extra,
+		absPath:    absPath,
+		modTime:    info.ModTime(),
+	}, nil
+}
+
 func buildLocalMusicTrack(rootAbs string, audioPath string) (*localMusicTrack, error) {
 	absPath, err := filepath.Abs(audioPath)
 	if err != nil {
@@ -354,6 +571,11 @@ func buildLocalMusicTrack(rootAbs string, audioPath string) (*localMusicTrack, e
 
 	filename := info.Name()
 	ext := strings.TrimPrefix(strings.ToLower(filepath.Ext(filename)), ".")
+	if cached := getCachedLocalMusicTrack(rootAbs, rel, info.Size(), info.ModTime()); cached != nil {
+		cached.absPath = absPath
+		cached.modTime = info.ModTime()
+		return cached, nil
+	}
 	fallbackName := strings.TrimSuffix(filename, filepath.Ext(filename))
 	name := ""
 	artist := ""
@@ -419,7 +641,7 @@ func buildLocalMusicTrack(rootAbs string, audioPath string) (*localMusicTrack, e
 		extra["lyric_source"] = "sidecar"
 	}
 
-	return &localMusicTrack{
+	track := &localMusicTrack{
 		ID:         id,
 		Source:     localMusicSource,
 		Name:       strings.TrimSpace(name),
@@ -437,7 +659,67 @@ func buildLocalMusicTrack(rootAbs string, audioPath string) (*localMusicTrack, e
 		Extra:      extra,
 		absPath:    absPath,
 		modTime:    info.ModTime(),
-	}, nil
+	}
+	cacheLocalMusicTrack(rootAbs, track)
+	return track, nil
+}
+
+func getCachedLocalMusicTrack(rootAbs string, relPath string, size int64, modTime time.Time) *localMusicTrack {
+	localMusicMetaCacheMu.RLock()
+	defer localMusicMetaCacheMu.RUnlock()
+	track := localMusicMetaCache[localMusicMetaCacheKey(rootAbs, relPath)]
+	if track == nil || track.Size != size || !track.modTime.Equal(modTime) {
+		return nil
+	}
+	return cloneLocalMusicTrack(track)
+}
+
+func cacheLocalMusicTrack(rootAbs string, track *localMusicTrack) {
+	if track == nil || strings.TrimSpace(track.RelPath) == "" {
+		return
+	}
+	localMusicMetaCacheMu.Lock()
+	localMusicMetaCache[localMusicMetaCacheKey(rootAbs, track.RelPath)] = cloneLocalMusicTrack(track)
+	localMusicMetaCacheMu.Unlock()
+}
+
+func localMusicMetaCacheKey(rootAbs string, relPath string) string {
+	root, err := filepath.Abs(rootAbs)
+	if err != nil {
+		root = rootAbs
+	}
+	return filepath.Clean(root) + "|" + filepath.ToSlash(relPath)
+}
+
+func cloneLocalMusicTrack(track *localMusicTrack) *localMusicTrack {
+	if track == nil {
+		return nil
+	}
+	next := *track
+	if track.Missing != nil {
+		next.Missing = append([]string(nil), track.Missing...)
+	}
+	if track.Extra != nil {
+		next.Extra = make(map[string]string, len(track.Extra))
+		for key, value := range track.Extra {
+			next.Extra[key] = value
+		}
+	}
+	return &next
+}
+
+func cloneLocalMusicTrackSlice(tracks []*localMusicTrack) []*localMusicTrack {
+	if len(tracks) == 0 {
+		return []*localMusicTrack{}
+	}
+	cloned := make([]*localMusicTrack, 0, len(tracks))
+	for _, track := range tracks {
+		if track == nil {
+			continue
+		}
+		cloned = append(cloned, cloneLocalMusicTrack(track))
+	}
+	return cloned
 }
 
 func localMusicTrackByID(id string) (*localMusicTrack, error) {
@@ -528,7 +810,11 @@ func saveUploadedLocalMusic(file *multipart.FileHeader) (*localMusicTrack, error
 		return nil, closeErr
 	}
 
-	return buildLocalMusicTrack(rootAbs, dstPath)
+	track, err := buildLocalMusicTrack(rootAbs, dstPath)
+	if err == nil {
+		invalidateLocalMusicScanCache()
+	}
+	return track, err
 }
 
 func sanitizeLocalMusicUploadName(name string) (string, error) {
@@ -689,6 +975,17 @@ func localMusicSidecarFile(audioPath string, exts []string) (string, string, boo
 		entryBase := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		if strings.EqualFold(entryBase, baseName) {
 			return filepath.Join(dir, entry.Name()), entryExt, true
+		}
+	}
+	return "", "", false
+}
+
+func localMusicExactSidecarFile(audioPath string, exts []string) (string, string, bool) {
+	basePath := strings.TrimSuffix(audioPath, filepath.Ext(audioPath))
+	for _, ext := range exts {
+		candidate := basePath + ext
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, ext, true
 		}
 	}
 	return "", "", false
@@ -890,6 +1187,9 @@ func inspectLocalMusicFile(id string, duration string) (gin.H, error) {
 			track.Extra["bitrate"] = strconv.Itoa(probe.Bitrate)
 		}
 	}
+	if rootAbs, err := filepath.Abs(localMusicDownloadDir()); err == nil {
+		cacheLocalMusicTrack(rootAbs, track)
+	}
 
 	bitrate := "-"
 	if kbps, _ := strconv.Atoi(track.Extra["bitrate"]); kbps > 0 {
@@ -973,6 +1273,7 @@ func deleteLocalMusicTrack(id string) error {
 	if err := os.Remove(track.absPath); err != nil {
 		return err
 	}
+	invalidateLocalMusicScanCache()
 	return nil
 }
 

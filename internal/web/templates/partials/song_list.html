@@ -6,7 +6,7 @@
             {{ if .ColID }}
             <span class="result-count" style="font-size: 16px;"><i class="fa-solid fa-folder-open"></i> 正在查看: <span style="color:#10b981; margin-left: 5px;">{{ .ColName }}</span>（共 {{ .TotalCount }} 首）</span>
             {{ else if eq .SearchType "local_music" }}
-            <span class="result-count"><i class="fa-solid fa-music"></i> 本地音乐（共 <span class="count">{{ .TotalCount }}</span> 首）</span>
+            <span class="result-count"><i class="fa-solid fa-music"></i> 本地音乐（共 <span class="count" id="localMusicPageTotal">{{ .TotalCount }}</span> 首）</span>
             {{ else }}
             <span class="result-count"><i class="fa-solid fa-music"></i> 找到 <span class="count">{{ .TotalCount }}</span> 首歌曲</span>
             {{ if .PlaylistLink }}
@@ -86,7 +86,11 @@
         </div>
     </div>
 
-    <ul class="result-list">
+    {{ if $isLocalMusicPage }}
+    <div id="localMusicPageHint" class="local-music-page-hint" style="display:none;"></div>
+    {{ end }}
+
+    <ul class="result-list" {{ if $isLocalMusicPage }}id="localMusicPageList" data-local-music-page="true"{{ end }}>
         {{ range .Result }}
         {{ $song := . }}
         {{ $artists := artistTokens .Artist }}

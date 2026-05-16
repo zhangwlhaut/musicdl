@@ -17,6 +17,14 @@ const DOWNLOAD_DIR_PRESET_VALUES = [
     '/sdcard/Download'
 ];
 const DOWNLOAD_DIR_PRESETS = new Set(DOWNLOAD_DIR_PRESET_VALUES);
+const DEFAULT_UPDATE_REPO_URL = 'https://github.com/guohuiyuan/go-music-dl';
+const DEFAULT_GITHUB_PROXY_URL = 'https://edgeone.gh-proxy.com';
+const GITHUB_PROXY_PRESETS = [
+    'https://edgeone.gh-proxy.com',
+    'https://hk.gh-proxy.com/',
+    'https://gh-proxy.com/',
+    'https://gh.llkk.cc'
+];
 
 function isLocalMusicSourceValue(source) {
     const value = String(source || '').trim();
@@ -31,6 +39,10 @@ let webSettings = {
     disableFloatingLyrics: false,
     webPageSize: DEFAULT_WEB_PAGE_SIZE,
     cliPageSize: DEFAULT_CLI_PAGE_SIZE,
+    autoCheckUpdate: true,
+    updateRepoUrl: DEFAULT_UPDATE_REPO_URL,
+    githubProxyEnabled: false,
+    githubProxyUrl: DEFAULT_GITHUB_PROXY_URL,
     vgChangeCover: false,
     vgChangeAudio: false,
     vgChangeLyric: false,
@@ -46,6 +58,10 @@ function normalizeWebSettings(raw) {
         disableFloatingLyrics: false,
         webPageSize: DEFAULT_WEB_PAGE_SIZE,
         cliPageSize: DEFAULT_CLI_PAGE_SIZE,
+        autoCheckUpdate: true,
+        updateRepoUrl: DEFAULT_UPDATE_REPO_URL,
+        githubProxyEnabled: false,
+        githubProxyUrl: DEFAULT_GITHUB_PROXY_URL,
         vgChangeCover: false,
         vgChangeAudio: false,
         vgChangeLyric: false,
@@ -76,6 +92,18 @@ function normalizeWebSettings(raw) {
     }
     if (Number.isInteger(raw.cliPageSize) && raw.cliPageSize > 0) {
         next.cliPageSize = Math.min(raw.cliPageSize, 200);
+    }
+    if (typeof raw.autoCheckUpdate === 'boolean') {
+        next.autoCheckUpdate = raw.autoCheckUpdate;
+    }
+    if (typeof raw.updateRepoUrl === 'string' && raw.updateRepoUrl.trim() !== '') {
+        next.updateRepoUrl = raw.updateRepoUrl.trim();
+    }
+    if (typeof raw.githubProxyEnabled === 'boolean') {
+        next.githubProxyEnabled = raw.githubProxyEnabled;
+    }
+    if (typeof raw.githubProxyUrl === 'string' && raw.githubProxyUrl.trim() !== '') {
+        next.githubProxyUrl = raw.githubProxyUrl.trim();
     }
     if (typeof raw.vgChangeCover === 'boolean') {
         next.vgChangeCover = raw.vgChangeCover;
@@ -229,6 +257,7 @@ function applyWebSettings(settings) {
     if (cliPageSizeInput) {
         cliPageSizeInput.value = String(webSettings.cliPageSize || DEFAULT_CLI_PAGE_SIZE);
     }
+
 
     const vgChangeCoverToggle = document.getElementById('setting-vg-change-cover');
     if (vgChangeCoverToggle) {
@@ -680,6 +709,7 @@ function initializePageContent(root = document) {
     highlightCard(currentPlayingId);
     syncAllPlayButtons();
     syncMediaSession();
+    initializeLocalMusicPage(root);
 }
 
 function shouldHandleInternalNavigation(link, event) {
@@ -790,6 +820,13 @@ async function navigateTo(url, options = {}) {
 }
 
 function refreshCurrentPageContent(options = {}) {
+    if (isLocalMusicPageActive()) {
+        return loadLocalMusicPage(getCurrentLocalMusicPage(), {
+            force: true,
+            updateHistory: false,
+            scroll: options.scroll
+        });
+    }
     return navigateTo(window.location.href, {
         historyMode: 'replace',
         scroll: false,
@@ -879,7 +916,7 @@ function bindPageNavigationEvents() {
 document.addEventListener('DOMContentLoaded', function() {
     loadWebSettingsFromCache();
     applyWebSettings(webSettings);
-    fetchWebSettings();
+    fetchWebSettings().finally(() => maybeAutoCheckUpdate());
     bindPageNavigationEvents();
     initializePageContent(document);
     return;
@@ -1028,6 +1065,13 @@ function goToUserPlaylists() {
 function goToPage(page) {
     const target = parseInt(page, 10);
     if (!Number.isFinite(target) || target < 1) return;
+    if (isLocalMusicPageActive()) {
+        loadLocalMusicPage(target, {
+            updateHistory: true,
+            scroll: true
+        });
+        return;
+    }
     const url = new URL(window.location.href);
     url.searchParams.set('page', String(target));
     navigateTo(url.toString());
@@ -1039,6 +1083,268 @@ function parsePositiveInt(value, fallbackValue) {
         return fallbackValue;
     }
     return parsed;
+}
+
+function isLocalMusicPageActive(root = document) {
+    const scope = root && typeof root.querySelector === 'function' ? root : document;
+    return !!scope.querySelector('#localMusicPageList[data-local-music-page="true"]');
+}
+
+function getCurrentLocalMusicPage() {
+    const bar = document.getElementById('localMusicPagePagination');
+    if (bar) {
+        return parsePositiveInt(bar.dataset.currentPage, 1);
+    }
+    try {
+        return parsePositiveInt(new URL(window.location.href).searchParams.get('page'), 1);
+    } catch (_) {
+        return 1;
+    }
+}
+
+function getLocalMusicPageSize() {
+    return Math.min(parsePositiveInt(webSettings.webPageSize, DEFAULT_WEB_PAGE_SIZE), 200);
+}
+
+function setLocalMusicPageHint(message, isError = false) {
+    const hint = document.getElementById('localMusicPageHint');
+    if (!hint) return;
+    hint.textContent = message || '';
+    hint.classList.toggle('error', !!isError);
+    hint.style.display = message ? 'block' : 'none';
+}
+
+function normalizeSongExtra(extra) {
+    if (!extra) return {};
+    if (typeof extra === 'object' && !Array.isArray(extra)) return extra;
+    if (typeof extra === 'string') {
+        try {
+            const parsed = JSON.parse(extra);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                return parsed;
+            }
+        } catch (_) {
+        }
+    }
+    return {};
+}
+
+function serializeSongExtra(extra) {
+    return JSON.stringify(normalizeSongExtra(extra));
+}
+
+function localMusicSongFromTrack(track) {
+    const extra = normalizeSongExtra(track?.extra);
+    return {
+        id: String(track?.id || ''),
+        source: String(track?.source || LOCAL_MUSIC_SOURCE),
+        name: String(track?.name || track?.filename || '未命名音乐'),
+        artist: String(track?.artist || '未知歌手'),
+        album: String(track?.album || ''),
+        cover: String(track?.cover || ''),
+        duration: parsePositiveInt(track?.duration, 0),
+        extra
+    };
+}
+
+function renderLocalMusicPageCard(track) {
+    const song = localMusicSongFromTrack(track);
+    const extraJSON = serializeSongExtra(song.extra);
+    const album = song.album || '';
+    const cover = song.cover || '';
+    const coverHTML = cover
+        ? `<img src="${escapeHTML(cover)}" alt="${escapeHTML(song.name)}" loading="lazy" onerror="this.src='https://via.placeholder.com/150?text=Music'">`
+        : `<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#ccc;font-size:24px;">♪</div><img src="https://via.placeholder.com/150?text=Music" style="display:none;">`;
+
+    const lyricButton = song.extra && song.extra.lyric
+        ? `<a href="${escapeHTML(lyricURLsForSong({ ...song, extra: extraJSON }).download)}" id="lrc-${escapeHTML(song.id)}" class="btn-circle btn-dl btn-lyric" title="下载歌词" target="_blank"><i class="fa-solid fa-file-lines"></i></a>`
+        : '';
+    const coverButton = cover
+        ? `<a href="${escapeHTML(buildCoverDownloadURL({ ...song, extra: extraJSON }))}" class="btn-circle btn-dl btn-cover" title="下载封面" target="_blank"><i class="fa-regular fa-image"></i></a>`
+        : '';
+
+    return `
+        <li class="song-card"
+            data-id="${escapeHTML(song.id)}"
+            data-source="${escapeHTML(song.source)}"
+            data-album-id=""
+            data-album="${escapeHTML(album)}"
+            data-duration="${song.duration}"
+            data-name="${escapeHTML(song.name)}"
+            data-artist="${escapeHTML(song.artist)}"
+            data-cover="${escapeHTML(cover)}"
+            data-extra='${escapeHTML(extraJSON)}'>
+            <div class="checkbox-wrapper">
+                <input type="checkbox" class="song-checkbox" onclick="event.stopPropagation(); updateBatchToolbar();">
+            </div>
+            <div class="cover-wrapper">${coverHTML}</div>
+            <div class="song-info">
+                <h3>${escapeHTML(song.name)}</h3>
+                <div class="artist-line">${renderArtistLineHTML(song)}</div>
+                <div class="tags">
+                    <span class="tag tag-local">本地</span>
+                    <span class="tag tag-duration">${formatDuration(song.duration)}</span>
+                    <span class="tag tag-loading" id="size-${escapeHTML(song.id)}"><i class="fa fa-spinner fa-spin"></i></span>
+                    <span class="tag tag-loading" id="bitrate-${escapeHTML(song.id)}"><i class="fa fa-circle-notch fa-spin"></i></span>
+                </div>
+            </div>
+            <div class="actions">
+                <button type="button" class="btn-circle btn-play" title="播放" onclick="playAllAndJumpTo(this)">
+                    <i class="fa-solid fa-play"></i>
+                </button>
+                <button type="button" class="btn-circle btn-fav" title="收藏到自制歌单" onclick="openAddToCollectionModal(this)">
+                    <i class="fa-regular fa-heart"></i>
+                </button>
+                ${lyricButton}
+                ${coverButton}
+                <button type="button" class="btn-circle btn-delete-local" title="删除本地音乐" onclick="deleteLocalMusicFromButton(this)">
+                    <i class="fa-solid fa-trash"></i>
+                </button>
+            </div>
+        </li>
+    `;
+}
+
+function ensureLocalMusicPaginationBar() {
+    let bar = document.getElementById('localMusicPagePagination');
+    if (bar) return bar;
+    const list = document.getElementById('localMusicPageList');
+    if (!list) return null;
+    bar = document.createElement('div');
+    bar.id = 'localMusicPagePagination';
+    bar.className = 'pagination-bar';
+    bar.dataset.shortcutHint = 'PgUp / PgDn';
+    bar.title = 'Shortcut: PgUp / PgDn';
+    list.insertAdjacentElement('afterend', bar);
+    return bar;
+}
+
+function renderLocalMusicPagePagination(page, totalPages) {
+    const bar = ensureLocalMusicPaginationBar();
+    if (!bar) return;
+    if (totalPages <= 1) {
+        bar.style.display = 'none';
+        bar.dataset.currentPage = String(page);
+        bar.dataset.totalPages = String(totalPages);
+        return;
+    }
+
+    bar.style.display = 'flex';
+    bar.dataset.currentPage = String(page);
+    bar.dataset.totalPages = String(totalPages);
+    bar.innerHTML = `
+        <button type="button" class="ctrl-btn primary" onclick="goToPage(${page - 1})" ${page <= 1 ? 'disabled' : ''}>
+            <i class="fa-solid fa-chevron-left"></i> 上一页
+        </button>
+        <span class="pagination-text">第 ${page} / ${totalPages} 页</span>
+        <span class="pagination-shortcut-hint">PgUp / PgDn</span>
+        <button type="button" class="ctrl-btn primary" onclick="goToPage(${page + 1})" ${page >= totalPages ? 'disabled' : ''}>
+            下一页 <i class="fa-solid fa-chevron-right"></i>
+        </button>
+    `;
+}
+
+function updateLocalMusicPageURL(page, replace = false) {
+    const url = new URL(window.location.href);
+    url.searchParams.set('page', String(page));
+    if (replace) {
+        window.history.replaceState(null, '', url.toString());
+    } else {
+        window.history.pushState(null, '', url.toString());
+    }
+}
+
+async function loadLocalMusicPage(page = 1, options = {}) {
+    const list = document.getElementById('localMusicPageList');
+    if (!list) return false;
+    if (list.dataset.loading === '1') return false;
+
+    const targetPage = Math.max(1, parsePositiveInt(page, 1));
+    const pageSize = getLocalMusicPageSize();
+    const offset = (targetPage - 1) * pageSize;
+    const params = new URLSearchParams({
+        offset: String(offset),
+        limit: String(pageSize)
+    });
+    if (options.force) {
+        params.set('refresh', '1');
+    }
+
+    list.dataset.loading = '1';
+    setLocalMusicPageHint('正在加载本地音乐...');
+    try {
+        const response = await fetch(`${API_ROOT}/local_music?${params.toString()}`);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || payload.error) {
+            throw new Error((payload && payload.error) || '加载本地音乐失败');
+        }
+
+        const total = parsePositiveInt(payload.total, 0);
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        if (total > 0 && targetPage > totalPages) {
+            list.dataset.loading = '0';
+            return loadLocalMusicPage(totalPages, {
+                ...options,
+                updateHistory: true,
+                replaceHistory: true
+            });
+        }
+
+        const totalEl = document.getElementById('localMusicPageTotal');
+        if (totalEl) totalEl.textContent = String(total);
+
+        const toolbar = document.getElementById('batch-toolbar');
+        if (toolbar && toolbar.dataset.localMusic === 'true') {
+            toolbar.dataset.currentPage = String(targetPage);
+            toolbar.dataset.totalPages = String(totalPages);
+            toolbar.dataset.totalCount = String(total);
+            toolbar.dataset.pageSize = String(pageSize);
+        }
+
+        const tracks = Array.isArray(payload.tracks) ? payload.tracks : [];
+        list.innerHTML = tracks.map(renderLocalMusicPageCard).join('');
+
+        if (!payload.exists) {
+            setLocalMusicPageHint('下载目录还不存在。上传音乐后会自动创建该目录。');
+        } else if (total === 0) {
+            setLocalMusicPageHint('下载目录里还没有支持的音频文件，可上传 mp3、flac、m4a、ogg、wav、wma、aac。');
+        } else if (payload.refreshing) {
+            setLocalMusicPageHint('正在后台刷新本地音乐列表，当前显示上次扫描结果。');
+        } else {
+            setLocalMusicPageHint('');
+        }
+
+        renderLocalMusicPagePagination(targetPage, totalPages);
+        refreshDownloadLinks(list);
+        bindSongCardCovers(list);
+        updateBatchToolbar();
+        highlightCard(currentPlayingId);
+        syncAllPlayButtons();
+        syncMediaSession();
+
+        if (options.updateHistory) {
+            updateLocalMusicPageURL(targetPage, !!options.replaceHistory);
+        }
+        if (options.scroll) {
+            window.scrollTo({ top: 0, behavior: 'auto' });
+        }
+        return true;
+    } catch (error) {
+        setLocalMusicPageHint(error.message || '加载本地音乐失败', true);
+        return false;
+    } finally {
+        list.dataset.loading = '0';
+    }
+}
+
+function initializeLocalMusicPage(root = document) {
+    if (!isLocalMusicPageActive(root)) return;
+    const list = document.getElementById('localMusicPageList');
+    if (!list || list.dataset.initialized === '1') return;
+    list.dataset.initialized = '1';
+    loadLocalMusicPage(getCurrentLocalMusicPage(), {
+        updateHistory: false
+    });
 }
 
 function songFromCard(card) {
@@ -1763,6 +2069,161 @@ function drawQRCodeToCanvas(text, canvas) {
     }
 }
 
+async function checkAppUpdate(options = {}) {
+    const status = document.getElementById('updateCheckStatus');
+    const repoURL = options.repoURL || webSettings.updateRepoUrl || DEFAULT_UPDATE_REPO_URL;
+    const proxyEnabled = options.proxyEnabled ?? !!webSettings.githubProxyEnabled;
+    const proxyURL = options.proxyURL || webSettings.githubProxyUrl || DEFAULT_GITHUB_PROXY_URL;
+    const params = new URLSearchParams({
+        repo: repoURL,
+        use_proxy: proxyEnabled ? '1' : '0',
+        proxy: proxyURL
+    });
+
+    if (status) {
+        status.textContent = '正在检查...';
+        status.className = 'setting-inline-status';
+    }
+    try {
+        const response = await fetch(`${API_ROOT}/app_update/check?${params.toString()}`);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || payload.error) {
+            throw new Error((payload && payload.error) || '检查更新失败');
+        }
+        if (status) {
+            status.textContent = payload.update_available
+                ? `发现新版本 v${payload.latest_version}`
+                : `已是最新版本 v${payload.current_version}`;
+            status.className = `setting-inline-status ${payload.update_available ? 'success' : ''}`;
+        }
+        if (payload.update_available || options.showNoUpdate) {
+            openUpdateModal(payload);
+        }
+        return payload;
+    } catch (error) {
+        if (status) {
+            status.textContent = error.message || '检查更新失败';
+            status.className = 'setting-inline-status error';
+        }
+        if (!options.silent) {
+            showToast('检查更新失败', error.message || '检查更新失败', 'error');
+        }
+        return null;
+    }
+}
+
+function maybeAutoCheckUpdate() {
+    if (!webSettings.autoCheckUpdate) return;
+    const key = 'musicdl:update_checked_at';
+    const now = Date.now();
+    try {
+        const last = Number(localStorage.getItem(key) || '0');
+        if (Number.isFinite(last) && now - last < 6 * 60 * 60 * 1000) {
+            return;
+        }
+        localStorage.setItem(key, String(now));
+    } catch (_) {
+    }
+    checkAppUpdate({ silent: true });
+}
+
+function openUpdateModal(updateInfo = null) {
+    const modal = document.getElementById('appUpdateModal');
+    if (!modal) return;
+
+    if (updateInfo) {
+        modal.dataset.rawDownloadUrl = updateInfo.download_url || updateInfo.release_url || '';
+        modal.dataset.downloadUrl = updateInfo.proxied_url || updateInfo.download_url || updateInfo.release_url || '';
+        modal.dataset.releaseUrl = updateInfo.release_url || '';
+        const title = document.getElementById('appUpdateTitle');
+        const summary = document.getElementById('appUpdateSummary');
+        if (title) {
+            title.textContent = `关于 go-music-dl v${updateInfo.current_version || '-'}`;
+        }
+        if (summary) {
+            summary.textContent = `当前版本 v${updateInfo.current_version || '-'}，GitHub 最新版本 v${updateInfo.latest_version || '-'}`;
+        }
+    }
+
+    modal.style.display = 'flex';
+}
+
+async function openAboutAppModal() {
+    const title = document.getElementById('appUpdateTitle');
+    if (title) title.textContent = '关于 go-music-dl';
+    const summary = document.getElementById('appUpdateSummary');
+    if (summary) summary.textContent = '正在读取 GitHub 版本信息...';
+    openUpdateModal();
+    await checkAppUpdate({ showNoUpdate: true, silent: true });
+}
+
+function closeUpdateModal() {
+    const modal = document.getElementById('appUpdateModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function proxiedGithubURL(rawURL, proxyURL, enabled) {
+    if (!enabled || !rawURL || !rawURL.startsWith('https://github.com/')) {
+        return rawURL;
+    }
+    return `${(proxyURL || '').replace(/\/$/, '')}/${rawURL}`;
+}
+
+async function openLatestUpdatePage(target = 'download') {
+    const modal = document.getElementById('appUpdateModal');
+    const repoURL = webSettings.updateRepoUrl || DEFAULT_UPDATE_REPO_URL;
+    const proxyEnabled = !!webSettings.githubProxyEnabled;
+    const proxyURL = webSettings.githubProxyUrl || DEFAULT_GITHUB_PROXY_URL;
+
+    let downloadURL = modal?.dataset.rawDownloadUrl || '';
+    let releaseURL = modal?.dataset.releaseUrl || '';
+    if (!downloadURL || !releaseURL) {
+        const payload = await checkAppUpdate({
+            repoURL,
+            proxyEnabled,
+            proxyURL,
+            showNoUpdate: true,
+            silent: true
+        });
+        if (payload) {
+            downloadURL = payload.download_url || payload.release_url || downloadURL;
+            releaseURL = payload.release_url || releaseURL;
+            if (modal) {
+                modal.dataset.rawDownloadUrl = downloadURL;
+                modal.dataset.releaseUrl = releaseURL;
+            }
+        }
+    }
+
+    let url = target === 'release'
+        ? (releaseURL || downloadURL)
+        : (downloadURL || releaseURL);
+    if (!url) {
+        showToast('无法打开下载页', '没有可用的 GitHub 链接', 'error');
+        return;
+    }
+    url = proxiedGithubURL(url, proxyURL, proxyEnabled);
+
+    try {
+        const response = await fetch(`${API_ROOT}/app_update/open?url=${encodeURIComponent(url)}`);
+        const payload = await response.json().catch(() => null);
+        if (response.ok && payload && payload.ok) {
+            return;
+        }
+    } catch (_) {
+    }
+
+    try {
+        if (typeof globalThis !== 'undefined' && globalThis.callback && typeof globalThis.callback.musicDlOpenDownload === 'function') {
+            globalThis.callback.musicDlOpenDownload(url);
+            return;
+        }
+    } catch (_) {
+    }
+
+    window.open(url, '_blank', 'noopener,noreferrer');
+}
+
 function openCookieModal() {
     document.getElementById('cookieModal').style.display = 'flex';
     Promise.all([
@@ -1791,6 +2252,10 @@ function saveCookies() {
         disableFloatingLyrics: !document.getElementById('setting-floating-lyrics')?.checked,
         webPageSize: parsePositiveInt(webPageSizeInput?.value, DEFAULT_WEB_PAGE_SIZE),
         cliPageSize: parsePositiveInt(cliPageSizeInput?.value, DEFAULT_CLI_PAGE_SIZE),
+        autoCheckUpdate: webSettings.autoCheckUpdate,
+        updateRepoUrl: webSettings.updateRepoUrl || DEFAULT_UPDATE_REPO_URL,
+        githubProxyEnabled: !!webSettings.githubProxyEnabled,
+        githubProxyUrl: webSettings.githubProxyUrl || DEFAULT_GITHUB_PROXY_URL,
         vgChangeCover: !!document.getElementById('setting-vg-change-cover')?.checked,
         vgChangeAudio: !!document.getElementById('setting-vg-change-audio')?.checked,
         vgChangeLyric: !!document.getElementById('setting-vg-change-lyric')?.checked,
@@ -2843,6 +3308,48 @@ function renderArtistLineHTML(song) {
     return parts.join('');
 }
 
+function syncLocalSongActionButtons(card, song) {
+    if (!card || !song || !isLocalMusicSourceValue(song.source)) return;
+    const actions = card.querySelector('.actions');
+    if (!actions) return;
+
+    const extra = normalizeSongExtra(song.extra);
+    const deleteBtn = actions.querySelector('.btn-delete-local');
+    const insertBefore = (node) => {
+        if (deleteBtn) {
+            actions.insertBefore(node, deleteBtn);
+        } else {
+            actions.appendChild(node);
+        }
+    };
+
+    if (extra.lyric && !actions.querySelector('.btn-lyric')) {
+        const lyric = document.createElement('a');
+        lyric.id = `lrc-${song.id}`;
+        lyric.className = 'btn-circle btn-dl btn-lyric';
+        lyric.title = '下载歌词';
+        lyric.target = '_blank';
+        lyric.href = lyricURLsForSong(song).download;
+        lyric.innerHTML = '<i class="fa-solid fa-file-lines"></i>';
+        const coverBtn = actions.querySelector('.btn-cover');
+        if (coverBtn) {
+            actions.insertBefore(lyric, coverBtn);
+        } else {
+            insertBefore(lyric);
+        }
+    }
+
+    if (song.cover && !actions.querySelector('.btn-cover')) {
+        const cover = document.createElement('a');
+        cover.className = 'btn-circle btn-dl btn-cover';
+        cover.title = '下载封面';
+        cover.target = '_blank';
+        cover.href = buildCoverDownloadURL(song);
+        cover.innerHTML = '<i class="fa-regular fa-image"></i>';
+        insertBefore(cover);
+    }
+}
+
 function updateCardWithSong(card, song, options = {}) {
     if (!card || !song) return;
     const oldId = card.dataset.id; 
@@ -2856,7 +3363,7 @@ function updateCardWithSong(card, song, options = {}) {
     card.dataset.name = song.name || card.dataset.name;
     card.dataset.artist = song.artist || card.dataset.artist;
     card.dataset.cover = song.cover || '';
-    card.dataset.extra = song.extra ? JSON.stringify(song.extra) : '';
+    card.dataset.extra = serializeSongExtra(song.extra);
 
     const titleEl = card.querySelector('.song-info h3');
     if (titleEl) {
@@ -2930,6 +3437,10 @@ function updateCardWithSong(card, song, options = {}) {
     if (coverBtn) {
         coverBtn.href = buildCoverDownloadURL(song);
     }
+    syncLocalSongActionButtons(card, {
+        ...song,
+        extra: normalizeSongExtra(song.extra)
+    });
 
     const sizeTag = card.querySelector('[id^="size-"]');
     if (sizeTag) {
@@ -2967,14 +3478,14 @@ function syncSongToAPlayer(oldId, newSong) {
         audio.artist = newSong.artist;
         audio.album = newSong.album || '';
         audio.cover = newSong.cover;
-        audio.url = buildStreamURL(newSong.id, newSong.source, newSong.name, newSong.artist, newSong.album || '', newSong.cover || '', newSong.extra ? JSON.stringify(newSong.extra) : '');
+        audio.url = buildStreamURL(newSong.id, newSong.source, newSong.name, newSong.artist, newSong.album || '', newSong.cover || '', serializeSongExtra(newSong.extra));
         const lyricURLs = lyricURLsForPlayback(newSong);
         audio.lrc = lyricURLs.line;
         audio.raw_lrc = lyricURLs.auto;
         audio.custom_id = newSong.id; 
         audio.source = newSong.source; 
         audio.duration = newSong.duration || 0;
-        audio.extra = newSong.extra ? JSON.stringify(newSong.extra) : '';
+        audio.extra = serializeSongExtra(newSong.extra);
         
         if (ap.list.index === index) {
             ap.list.switch(index); 
@@ -3470,6 +3981,13 @@ async function batchRemoveFromCollection(colId) {
 
 let pendingFavSong = null;
 let activeLocalMusicCollectionId = '';
+let localMusicModalState = {
+    offset: 0,
+    limit: 80,
+    total: 0,
+    hasMore: false,
+    loading: false
+};
 
 function localMusicElements() {
     return {
@@ -3564,7 +4082,7 @@ function selectLocalMusicCollection(collectionId) {
     refreshLocalMusicList();
 }
 
-async function refreshLocalMusicList() {
+async function refreshLocalMusicList(options = {}) {
     const { list, dir } = localMusicElements();
     if (!list) return;
     if (!activeLocalMusicCollectionId) {
@@ -3572,9 +4090,22 @@ async function refreshLocalMusicList() {
         setLocalMusicHint('请选择一个目标歌单。');
         return;
     }
+    if (localMusicModalState.loading) return;
 
-    const params = new URLSearchParams({ collection_id: activeLocalMusicCollectionId });
+    const append = !!options.append;
+    if (!append) {
+        localMusicModalState.offset = 0;
+        localMusicModalState.total = 0;
+        localMusicModalState.hasMore = false;
+    }
+
+    const params = new URLSearchParams({
+        collection_id: activeLocalMusicCollectionId,
+        offset: String(localMusicModalState.offset),
+        limit: String(localMusicModalState.limit)
+    });
     try {
+        localMusicModalState.loading = true;
         const response = await fetch(`${API_ROOT}/local_music?${params.toString()}`);
         const payload = await response.json().catch(() => null);
         if (!response.ok || !payload || payload.error) {
@@ -3583,10 +4114,14 @@ async function refreshLocalMusicList() {
         if (dir) {
             dir.textContent = `下载目录：${payload.download_dir || webSettings.downloadDir || '-'}`;
         }
-        renderLocalMusicList(payload);
+        renderLocalMusicList(payload, append);
     } catch (error) {
-        list.innerHTML = '';
+        if (!append) {
+            list.innerHTML = '';
+        }
         setLocalMusicHint(error.message || '加载本地音乐失败', true);
+    } finally {
+        localMusicModalState.loading = false;
     }
 }
 
@@ -3597,12 +4132,20 @@ function localMusicMissingText(track) {
     return `缺少${missing.map(key => labels[key] || key).join('、')}`;
 }
 
-function renderLocalMusicList(payload) {
+function renderLocalMusicList(payload, append = false) {
     const { list } = localMusicElements();
     if (!list) return;
 
     const tracks = Array.isArray(payload.tracks) ? payload.tracks : [];
-    list.innerHTML = '';
+    localMusicModalState.total = parsePositiveInt(payload.total, 0);
+    localMusicModalState.offset = parsePositiveInt(payload.offset, 0) + tracks.length;
+    localMusicModalState.hasMore = !!payload.has_more;
+
+    if (!append) {
+        list.innerHTML = '';
+    } else {
+        list.querySelector('.local-music-load-more')?.remove();
+    }
 
     if (!payload.exists) {
         setLocalMusicHint('下载目录还不存在。上传音乐后会自动创建该目录。');
@@ -3651,6 +4194,18 @@ function renderLocalMusicList(payload) {
         }
         list.appendChild(item);
     });
+
+    if (localMusicModalState.hasMore) {
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'btn-pill btn-pill-dl local-music-load-more';
+        more.innerHTML = '<i class="fa-solid fa-chevron-down"></i> 加载更多';
+        more.onclick = () => refreshLocalMusicList({ append: true });
+        list.appendChild(more);
+        setLocalMusicHint(`已显示 ${localMusicModalState.offset} / ${localMusicModalState.total} 首`);
+    } else {
+        setLocalMusicHint('');
+    }
 }
 
 async function uploadLocalMusicFile(input) {

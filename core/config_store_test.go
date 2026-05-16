@@ -107,6 +107,18 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	if defaults.DownloadConcurrency != DefaultWebConcurrency {
 		t.Fatalf("default DownloadConcurrency mismatch: got %d want %d", defaults.DownloadConcurrency, DefaultWebConcurrency)
 	}
+	if !defaults.AutoCheckUpdate {
+		t.Fatalf("default AutoCheckUpdate should be true")
+	}
+	if defaults.UpdateRepoURL != DefaultUpdateRepoURL {
+		t.Fatalf("default UpdateRepoURL mismatch: got %q want %q", defaults.UpdateRepoURL, DefaultUpdateRepoURL)
+	}
+	if defaults.GithubProxyEnabled {
+		t.Fatalf("default GithubProxyEnabled should be false")
+	}
+	if defaults.GithubProxyURL != DefaultGithubProxyURL {
+		t.Fatalf("default GithubProxyURL mismatch: got %q want %q", defaults.GithubProxyURL, DefaultGithubProxyURL)
+	}
 	if defaults.VgChangeCover {
 		t.Fatalf("default VgChangeCover should be false")
 	}
@@ -129,6 +141,10 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 		WebPageSize:              100,
 		CliPageSize:              120,
 		DownloadConcurrency:      5,
+		AutoCheckUpdate:          false,
+		UpdateRepoURL:            "https://github.com/example/fork",
+		GithubProxyEnabled:       true,
+		GithubProxyURL:           "https://gh-proxy.com/",
 		VgChangeCover:            true,
 		VgChangeAudio:            true,
 		VgChangeLyric:            true,
@@ -147,6 +163,10 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 		WebPageSize:              100,
 		CliPageSize:              120,
 		DownloadConcurrency:      5,
+		AutoCheckUpdate:          false,
+		UpdateRepoURL:            "https://github.com/example/fork",
+		GithubProxyEnabled:       true,
+		GithubProxyURL:           "https://gh-proxy.com/",
 		VgChangeCover:            true,
 		VgChangeAudio:            true,
 		VgChangeLyric:            true,
@@ -181,6 +201,18 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	}
 	if got.DownloadConcurrency != DefaultWebConcurrency {
 		t.Fatalf("custom save should fallback DownloadConcurrency to default: got %d want %d", got.DownloadConcurrency, DefaultWebConcurrency)
+	}
+	if got.AutoCheckUpdate {
+		t.Fatalf("custom save should keep AutoCheckUpdate false when omitted: %#v", got)
+	}
+	if got.UpdateRepoURL != DefaultUpdateRepoURL {
+		t.Fatalf("custom save should fallback UpdateRepoURL to default: got %q want %q", got.UpdateRepoURL, DefaultUpdateRepoURL)
+	}
+	if got.GithubProxyEnabled {
+		t.Fatalf("custom save should fallback GithubProxyEnabled to default false: %#v", got)
+	}
+	if got.GithubProxyURL != DefaultGithubProxyURL {
+		t.Fatalf("custom save should fallback GithubProxyURL to default: got %q want %q", got.GithubProxyURL, DefaultGithubProxyURL)
 	}
 	if got.VgChangeCover || got.VgChangeAudio || got.VgChangeLyric || got.VgExportVideo {
 		t.Fatalf("custom save should fallback video generator settings to default false: %#v", got)

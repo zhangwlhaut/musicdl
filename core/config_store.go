@@ -20,6 +20,8 @@ const (
 	DefaultWebPageSize              = 50
 	DefaultCLIPageSize              = 20
 	DefaultWebConcurrency           = 3
+	DefaultUpdateRepoURL            = "https://github.com/guohuiyuan/go-music-dl"
+	DefaultGithubProxyURL           = "https://edgeone.gh-proxy.com"
 	webSettingsKey                  = "web_settings"
 )
 
@@ -44,6 +46,10 @@ type WebSettings struct {
 	WebPageSize              int    `json:"webPageSize"`
 	CliPageSize              int    `json:"cliPageSize"`
 	DownloadConcurrency      int    `json:"downloadConcurrency"`
+	AutoCheckUpdate          bool   `json:"autoCheckUpdate"`
+	UpdateRepoURL            string `json:"updateRepoUrl"`
+	GithubProxyEnabled       bool   `json:"githubProxyEnabled"`
+	GithubProxyURL           string `json:"githubProxyUrl"`
 	VgChangeCover            bool   `json:"vgChangeCover"`
 	VgChangeAudio            bool   `json:"vgChangeAudio"`
 	VgChangeLyric            bool   `json:"vgChangeLyric"`
@@ -153,6 +159,10 @@ func defaultWebSettings() WebSettings {
 		WebPageSize:              DefaultWebPageSize,
 		CliPageSize:              DefaultCLIPageSize,
 		DownloadConcurrency:      DefaultWebConcurrency,
+		AutoCheckUpdate:          true,
+		UpdateRepoURL:            DefaultUpdateRepoURL,
+		GithubProxyEnabled:       false,
+		GithubProxyURL:           DefaultGithubProxyURL,
 	})
 }
 
@@ -179,6 +189,14 @@ func normalizeWebSettings(settings WebSettings) WebSettings {
 	}
 	if settings.DownloadConcurrency < 1 {
 		settings.DownloadConcurrency = 1
+	}
+	settings.UpdateRepoURL = strings.TrimSpace(settings.UpdateRepoURL)
+	if settings.UpdateRepoURL == "" {
+		settings.UpdateRepoURL = DefaultUpdateRepoURL
+	}
+	settings.GithubProxyURL = strings.TrimSpace(settings.GithubProxyURL)
+	if settings.GithubProxyURL == "" {
+		settings.GithubProxyURL = DefaultGithubProxyURL
 	}
 	settings.DownloadDir = normalizeWebDownloadDir(settings.DownloadDir)
 	return settings

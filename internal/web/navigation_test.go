@@ -97,6 +97,46 @@ func TestAppJSIncludesAjaxNavigationEntryPoints(t *testing.T) {
 	if !strings.Contains(js, "refreshDownloadLinks(root);") {
 		t.Fatal("app.js missing download link refresh during page initialization")
 	}
+	if !strings.Contains(js, "function maybeAutoCheckUpdate()") {
+		t.Fatal("app.js missing auto update check")
+	}
+	if !strings.Contains(js, "function checkAppUpdate(options = {})") {
+		t.Fatal("app.js missing GitHub update check")
+	}
+	if !strings.Contains(js, "async function openAboutAppModal()") {
+		t.Fatal("app.js missing openAboutAppModal entry point")
+	}
+	if !strings.Contains(js, "async function openLatestUpdatePage(target = 'download')") {
+		t.Fatal("app.js missing openLatestUpdatePage helper")
+	}
+	if !strings.Contains(js, "/app_update/open?url=") {
+		t.Fatal("app.js missing /app_update/open call")
+	}
+	if strings.Contains(js, "/app_update/install_link") {
+		t.Fatal("app.js should no longer reference removed install_link API")
+	}
+	for _, removed := range []string{
+		"function syncGithubProxyInputs",
+		"function currentGithubProxyURL",
+		"function updateProxyCustomState",
+		"async function testGithubProxy",
+		"function syncUpdateProxyInputs",
+		"function currentUpdateProxyURL",
+		"function updateUpdateProxyCustomState",
+		"async function testUpdateGithubProxy",
+		"function applyUpdateProxyVisibility",
+		"async function refreshUpdateModalCheck",
+	} {
+		if strings.Contains(js, removed) {
+			t.Fatalf("app.js should not redeclare deprecated helper %q", removed)
+		}
+	}
+	if !strings.Contains(js, "function initializeLocalMusicPage(root = document)") {
+		t.Fatal("app.js missing async local music page initializer")
+	}
+	if !strings.Contains(js, "offset: String(offset)") {
+		t.Fatal("app.js missing paged local music API request")
+	}
 }
 
 func TestAppJSPlaybackURLIgnoresEmbedDownloadSetting(t *testing.T) {
@@ -157,6 +197,8 @@ func TestSettingsModalIncludesDownloadDirPresets(t *testing.T) {
 		`id="setting-download-dir-preset"`,
 		`id="setting-download-filename-template"`,
 		`id="setting-floating-lyrics"`,
+		`onclick="openAboutAppModal()"`,
+		`关于 go-music-dl`,
 		`{album}`,
 		`{source}`,
 		`{ext}`,
@@ -167,7 +209,74 @@ func TestSettingsModalIncludesDownloadDirPresets(t *testing.T) {
 		`自定义目录...`,
 	} {
 		if !strings.Contains(html, want) {
-			t.Fatalf("settings modal missing download dir preset %q", want)
+			t.Fatalf("settings modal missing token %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`id="setting-update-repo-url"`,
+		`id="setting-github-proxy-enabled"`,
+		`id="setting-github-proxy-disabled"`,
+		`name="setting-github-proxy-url"`,
+		`onclick="testGithubProxy()"`,
+		`onclick="checkAppUpdate({ showNoUpdate: true })"`,
+		`id="setting-auto-check-update"`,
+		`id="updateRepoUrlInput"`,
+		`id="updateGithubProxyEnabled"`,
+		`name="update-github-proxy-url"`,
+		`id="updateGithubProxyCustom"`,
+		`onchange="applyUpdateProxyVisibility()"`,
+		`onclick="testUpdateGithubProxy()"`,
+	} {
+		if strings.Contains(html, unwanted) {
+			t.Fatalf("modals.html should not contain removed update control %q", unwanted)
+		}
+	}
+}
+
+func TestAppUpdateModalIsAboutOnly(t *testing.T) {
+	content, err := templateFS.ReadFile("templates/partials/modals.html")
+	if err != nil {
+		t.Fatalf("ReadFile(modals.html): %v", err)
+	}
+	html := string(content)
+	for _, want := range []string{
+		`id="appUpdateModal"`,
+		`id="appUpdateTitle"`,
+		`id="appUpdateSummary"`,
+		`id="updateCheckStatus"`,
+		`onclick="closeUpdateModal()"`,
+		`onclick="openLatestUpdatePage('release')"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("app update modal missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{
+		`id="updateRepoUrlInput"`,
+		`id="updateGithubProxyEnabled"`,
+		`id="updateGithubProxyDisabled"`,
+		`id="updateGithubProxyCustom"`,
+		`id="updateGithubProxyCustomRadio"`,
+		`name="update-github-proxy-url"`,
+		`name="update-github-proxy-mode"`,
+		`name="update-install-mode"`,
+		`id="updatePackageFile"`,
+		`id="appUpdateNotes"`,
+		`id="updateProxyTestStatus"`,
+		`onclick="testUpdateGithubProxy()"`,
+		`onclick="refreshUpdateModalCheck()"`,
+		`onclick="openLatestUpdatePage('download')"`,
+		`onchange="applyUpdateProxyVisibility()"`,
+		`installUpdateFromModal`,
+		`appUpdateInstallBtn`,
+		`重新检查`,
+		`前往 GitHub 下载`,
+		`从文件安装`,
+		`https://edgeone.gh-proxy.com`,
+		`https://gh.llkk.cc`,
+	} {
+		if strings.Contains(html, unwanted) {
+			t.Fatalf("app update modal should be minimal but contains %q", unwanted)
 		}
 	}
 }
