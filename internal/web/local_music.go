@@ -482,7 +482,7 @@ func buildLocalMusicTrackFast(rootAbs string, audioPath string) (*localMusicTrac
 		cached.modTime = track.modTime
 		return cached, nil
 	}
-	return track, nil
+	return buildLocalMusicTrack(rootAbs, audioPath)
 }
 
 func buildLocalMusicTrackFallback(rootAbs string, audioPath string) (*localMusicTrack, error) {

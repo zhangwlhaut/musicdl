@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/guohuiyuan/go-music-dl/core"
 	"github.com/guohuiyuan/music-lib/model"
 )
 
@@ -389,6 +390,72 @@ func TestLocalMusicSidecarCoverAndLyricFallbacks(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), lyricText) {
 		t.Fatalf("local lyric body = %q, want lyric %q", rec.Body.String(), lyricText)
+	}
+}
+
+func TestLocalMusicListIncludesEmbeddedCover(t *testing.T) {
+	initCollectionDBForTest(t)
+
+	downloadDir := t.TempDir()
+	withLocalMusicDownloadDir(t, downloadDir)
+
+	coverBytes := []byte{0xff, 0xd8, 0xff, 0xd9}
+	embedded, err := core.EmbedSongMetadata(
+		[]byte{0xff, 0xfb, 0x90, 0x64, 0x00, 0x00, 0x00, 0x00},
+		&model.Song{Name: "Embedded Cover", Artist: "Local Artist", Album: "Local Album", Ext: "mp3"},
+		"",
+		coverBytes,
+		"image/jpeg",
+	)
+	if err != nil {
+		t.Fatalf("EmbedSongMetadata() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(downloadDir, "Embedded Cover.mp3"), embedded, 0644); err != nil {
+		t.Fatalf("write embedded cover audio: %v", err)
+	}
+
+	router := newLocalMusicTestRouter()
+	req := httptest.NewRequest(http.MethodGet, RoutePrefix+"/local_music", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /local_music status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp struct {
+		Tracks []localMusicTrack `json:"tracks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode local music response: %v", err)
+	}
+	if len(resp.Tracks) != 1 {
+		t.Fatalf("local music tracks len = %d, want 1", len(resp.Tracks))
+	}
+
+	track := resp.Tracks[0]
+	if track.Cover == "" {
+		t.Fatal("track.Cover is empty, want embedded cover URL")
+	}
+	if track.Extra["cover_source"] != "embedded" {
+		t.Fatalf("cover_source = %q, want embedded", track.Extra["cover_source"])
+	}
+	if track.Name != "Embedded Cover" || track.Artist != "Local Artist" || track.Album != "Local Album" {
+		t.Fatalf("track metadata = %q/%q/%q, want embedded metadata", track.Name, track.Artist, track.Album)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, RoutePrefix+"/local_music/cover?id="+url.QueryEscape(track.ID), nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET local embedded cover status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); got != "image/jpeg" {
+		t.Fatalf("local embedded cover content type = %q, want image/jpeg", got)
+	}
+	if !bytes.Equal(rec.Body.Bytes(), coverBytes) {
+		t.Fatalf("local embedded cover body = %v, want %v", rec.Body.Bytes(), coverBytes)
 	}
 }
 
