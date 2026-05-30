@@ -3,14 +3,22 @@
 package main
 
 import (
+	"context"
 	"log"
 
-	"github.com/guohuiyuan/go-music-dl/internal/web"
+	"github.com/guohuiyuan/go-music-dl/internal/appshell"
 	"github.com/jchv/go-webview2"
 )
 
 func main() {
-	go web.StartDesktop("37777")
+	ctx, cancel := context.WithTimeout(context.Background(), appshell.ReadyTimeout)
+	defer cancel()
+
+	target, err := appshell.StartDesktopServerAndWait(ctx, appshell.DefaultPort)
+	if err != nil {
+		log.Printf("desktop server startup probe failed: %v", err)
+		target = appshell.StartupErrorDataURL(err.Error(), target)
+	}
 
 	w := webview2.NewWithOptions(webview2.WebViewOptions{
 		Debug:     false,
@@ -28,6 +36,6 @@ func main() {
 	}
 	defer w.Destroy()
 	w.SetSize(1350, 780, webview2.Hint(webview2.HintNone))
-	w.Navigate("http://localhost:37777/music/")
+	w.Navigate(target)
 	w.Run()
 }

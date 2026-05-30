@@ -393,6 +393,13 @@ func StartWithOptions(port string, opts StartOptions) {
 
 	api := r.Group(RoutePrefix)
 
+	api.GET("/healthz", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"app":    "go-music-dl",
+			"status": "ok",
+		})
+	})
+
 	// Static assets embedded at build time.
 	api.GET("/icon.png", func(c *gin.Context) { c.FileFromFS("templates/static/images/icon.png", http.FS(templateFS)) })
 	api.GET("/style.css", func(c *gin.Context) { c.FileFromFS("templates/static/css/style.css", http.FS(templateFS)) })
@@ -455,7 +462,11 @@ func StartWithOptions(port string, opts StartOptions) {
 		return
 	}
 
-	urlStr := "http://localhost:" + port + RoutePrefix
+	urlHost := opts.ListenHost
+	if urlHost == "" || urlHost == "0.0.0.0" || urlHost == "::" {
+		urlHost = "localhost"
+	}
+	urlStr := "http://" + urlHost + ":" + port + RoutePrefix
 	fmt.Printf("Web started at %s\n", urlStr)
 	if opts.ShouldOpenBrowser {
 		go func() { time.Sleep(500 * time.Millisecond); core.OpenBrowser(urlStr) }()

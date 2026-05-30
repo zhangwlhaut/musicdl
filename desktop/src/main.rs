@@ -24,7 +24,9 @@ mod window_config {
 
 mod server_config {
     pub const PORT: &str = "37777";
+    pub const HOST: &str = "127.0.0.1";
     pub const URL_PATH: &str = "/music/";
+    pub const HEALTH_PATH: &str = "/music/healthz";
     pub const STARTUP_TIMEOUT_MS: u64 = 15_000;
     pub const STARTUP_POLL_MS: u64 = 250;
     pub const CONNECT_TIMEOUT_MS: u64 = 500;
@@ -61,7 +63,8 @@ fn main() -> wry::Result<()> {
 
     let temp_binary_path = extract_backend_binary();
     let server_url = format!(
-        "http://localhost:{}{}",
+        "http://{}:{}{}",
+        server_config::HOST,
         server_config::PORT,
         server_config::URL_PATH
     );
@@ -285,8 +288,9 @@ fn is_server_ready() -> bool {
     )));
 
     let request = format!(
-        "GET {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-        server_config::URL_PATH
+        "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\n\r\n",
+        server_config::HEALTH_PATH,
+        server_config::HOST
     );
     if stream.write_all(request.as_bytes()).is_err() {
         return false;

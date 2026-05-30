@@ -313,11 +313,20 @@ jobs:
             <string>0.1.0</string>
             <key>CFBundleIconFile</key>
             <string>music-dl-desktop-go</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>10.15</string>
+            <key>NSAppTransportSecurity</key>
+            <dict>
+              <key>NSAllowsLocalNetworking</key>
+              <true/>
+            </dict>
           </dict>
           </plist>
           EOF
 
-          codesign --force --deep --sign - "${app_dir}" || true
+          plutil -lint "${app_dir}/Contents/Info.plist"
+          codesign --force --deep --sign - "${app_dir}"
+          codesign --verify --deep --strict "${app_dir}"
           tar -C dist -czf "${{ matrix.archive_name }}" "${package_root}"
 
           rm -rf bundle
@@ -351,6 +360,9 @@ jobs:
           test -f "music-dl-desktop-go-macos-${{ matrix.goarch }}.dmg"
           test -f "music-dl-desktop-go-macos-${{ matrix.goarch }}.pkg"
           hdiutil verify "music-dl-desktop-go-macos-${{ matrix.goarch }}.dmg"
+          ats_value="$(plutil -extract NSAppTransportSecurity.NSAllowsLocalNetworking raw -o - "dist/music-dl-desktop-go_${{ matrix.goos }}_${{ matrix.goarch }}/music-dl-desktop-go.app/Contents/Info.plist")"
+          test "$ats_value" = "1" || test "$ats_value" = "true"
+          codesign --verify --deep --strict "dist/music-dl-desktop-go_${{ matrix.goos }}_${{ matrix.goarch }}/music-dl-desktop-go.app"
 
       - name: Verify desktop_go package (Windows)
         if: matrix.goos == 'windows'
@@ -534,22 +546,83 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-          
-      - name: Build iOS IPA
+
+      - name: Build unsigned iOS signing package
+        env:
+          IOS_UNSIGNED_ONLY: "1"
+          IOS_APP_ID: ${{ vars.IOS_APP_ID }}
         run: |
           chmod +x package_ios.sh
           ./package_ios.sh
-          
-      - name: Upload iOS App Artifact
+
+      - name: Upload unsigned iOS signing package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: music-dl-ios-app
+          name: music-dl-ios-unsigned-signing-package
           path: music-dl-ios-unsigned.ipa
 
-      - name: Upload iOS App to Release
+      - name: Upload unsigned iOS signing package to Release
         uses: softprops/action-gh-release@v2
         with:
           files: music-dl-ios-unsigned.ipa
+
+      - name: Check iOS signing inputs
+        id: ios_signing
+        env:
+          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+        run: |
+          if [ -n "$IOS_PROVISION_PROFILE_BASE64" ] && [ -n "$IOS_CERTIFICATE_P12_BASE64" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping iOS IPA: IOS_PROVISION_PROFILE_BASE64 and IOS_CERTIFICATE_P12_BASE64 are required for a real device IPA."
+          fi
+
+      - name: Import iOS signing certificate
+        if: steps.ios_signing.outputs.enabled == 'true'
+        env:
+          IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -lut 21600 build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          printf '%s' "$IOS_CERTIFICATE_P12_BASE64" | base64 --decode > ios_certificate.p12
+          security import ios_certificate.p12 -k build.keychain -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12
+          security list-keychains -d user -s build.keychain
+          security default-keychain -s build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+
+      - name: Decode iOS provisioning profile
+        if: steps.ios_signing.outputs.enabled == 'true'
+        env:
+          IOS_PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+        run: |
+          printf '%s' "$IOS_PROVISION_PROFILE_BASE64" | base64 --decode > ios.mobileprovision
+
+      - name: Build iOS IPA
+        if: steps.ios_signing.outputs.enabled == 'true'
+        env:
+          IOS_PROVISION_PROFILE: ${{ github.workspace }}/ios.mobileprovision
+          IOS_APP_ID: ${{ vars.IOS_APP_ID }}
+        run: |
+          chmod +x package_ios.sh
+          ./package_ios.sh
+
+      - name: Upload iOS App Artifact
+        if: steps.ios_signing.outputs.enabled == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: music-dl-ios-app
+          path: music-dl-ios.ipa
+
+      - name: Upload iOS App to Release
+        if: steps.ios_signing.outputs.enabled == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: music-dl-ios.ipa
 
   # 6. Windows desktop build
   build-windows-desktop:
@@ -675,9 +748,39 @@ jobs:
           sips -z 512 512 desktop/icon.png --out MusicDL.iconset/icon_512x512.png
           iconutil -c icns MusicDL.iconset -o bundle/music-dl-desktop-rust.app/Contents/Resources/music-dl-desktop-rust.icns
 
-          echo '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd"><plist version="1.0"><dict><key>CFBundleExecutable</key><string>music-dl-desktop-rust</string><key>CFBundleIdentifier</key><string>com.guohuiyuan.musicdl.desktoprust</string><key>CFBundleName</key><string>music-dl-desktop-rust</string><key>CFBundleIconFile</key><string>music-dl-desktop-rust</string><key>CFBundlePackageType</key><string>APPL</string><key>CFBundleShortVersionString</key><string>0.1.0</string><key>LSUIElement</key><true/></dict></plist>' > bundle/music-dl-desktop-rust.app/Contents/Info.plist
+          cat > bundle/music-dl-desktop-rust.app/Contents/Info.plist <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleExecutable</key>
+            <string>music-dl-desktop-rust</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.guohuiyuan.musicdl.desktoprust</string>
+            <key>CFBundleName</key>
+            <string>music-dl-desktop-rust</string>
+            <key>CFBundleDisplayName</key>
+            <string>music-dl-desktop-rust</string>
+            <key>CFBundleIconFile</key>
+            <string>music-dl-desktop-rust</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>0.1.0</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>10.15</string>
+            <key>NSAppTransportSecurity</key>
+            <dict>
+              <key>NSAllowsLocalNetworking</key>
+              <true/>
+            </dict>
+          </dict>
+          </plist>
+          EOF
 
-          codesign --force --deep --sign - bundle/music-dl-desktop-rust.app || true
+          plutil -lint bundle/music-dl-desktop-rust.app/Contents/Info.plist
+          codesign --force --deep --sign - bundle/music-dl-desktop-rust.app
+          codesign --verify --deep --strict bundle/music-dl-desktop-rust.app
 
           cp -R bundle/music-dl-desktop-rust.app bundle/dmg-root/
           create-dmg --volname "music-dl-desktop-rust Installer" --window-pos 200 120 --window-size 800 400 --app-drop-link 600 185 "music-dl-desktop-rust-macos-${{ matrix.arch_name }}.dmg" "bundle/dmg-root"
@@ -687,6 +790,10 @@ jobs:
         run: |
           test -f bundle/music-dl-desktop-rust.app/Contents/Resources/music-dl-desktop-rust.icns
           test -f bundle/music-dl-desktop-rust.app/Contents/Info.plist
+          ats_value="$(plutil -extract NSAppTransportSecurity.NSAllowsLocalNetworking raw -o - bundle/music-dl-desktop-rust.app/Contents/Info.plist)"
+          test "$ats_value" = "1" || test "$ats_value" = "true"
+          hdiutil verify "music-dl-desktop-rust-macos-${{ matrix.arch_name }}.dmg"
+          codesign --verify --deep --strict bundle/music-dl-desktop-rust.app
 
       - name: Upload Artifacts
         uses: softprops/action-gh-release@v2

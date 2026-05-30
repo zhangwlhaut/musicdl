@@ -18,7 +18,7 @@ Go Music DL 是一个音乐搜索与下载工具，支持 **Web 界面**、**TUI
 2. 解压，双击运行
 3. 享受原生桌面体验！
 
-移动端下载说明：在 [Releases](https://github.com/guohuiyuan/go-music-dl/releases) 页面可直接下载 Android `music-dl_arm64-v8a.apk`（推荐）/ `music-dl_x86_64.apk` / `music-dl.apk`（无分片兼容包）与 iOS `music-dl-ios-unsigned.ipa`。
+移动端下载说明：在 [Releases](https://github.com/guohuiyuan/go-music-dl/releases) 页面可直接下载 Android `music-dl_arm64-v8a.apk`（推荐）/ `music-dl_x86_64.apk` / `music-dl.apk`（无分片兼容包）。iOS 会提供 `music-dl-ios-unsigned.ipa` 给用户自行签名；如果发布环境配置了证书，也会额外提供已签名的 `music-dl-ios.ipa`。
 
 ### Web 模式
 
@@ -377,31 +377,35 @@ package_app.bat
 
 * macOS（需安装 Xcode Command Line Tools）
 * Go 已安装并可用
-* 可使用 `sudo`（脚本会在必要时补齐 Xcode 工具链中的 `libarclite` 文件）
+* 可用的 iOS provisioning profile 与对应签名证书
 
 #### 2. 执行构建
 
 ```bash
 cd go-music-dl
 chmod +x package_ios.sh
+export IOS_APP_ID=com.guohuiyuan.musicdl
+export IOS_PROVISION_PROFILE=/path/to/profile.mobileprovision
 ./package_ios.sh
+
+# 只生成给用户自行签名的包
+IOS_UNSIGNED_ONLY=1 ./package_ios.sh
 ```
 
 脚本会自动：
 
-* 检查并补齐 `libarclite_iphonesimulator.a` / `libarclite_iphoneos.a`
 * 安装 `gogio`
-* 构建 iOS App（输出 `music-dl.app`）
-* 打包为未签名 IPA（输出 `music-dl-ios-unsigned.ipa`）
+* 使用 provisioning profile 打包为真机 IPA（输出 `music-dl-ios.ipa`）
+* 或使用 `IOS_UNSIGNED_ONLY=1` 生成真机架构的待签名包（输出 `music-dl-ios-unsigned.ipa`）
 
 #### 3. 产物说明
 
-* `music-dl.app`：iOS 应用包目录
-* `music-dl-ios-unsigned.ipa`：未签名安装包，通常用于后续签名与分发流程
+* `music-dl-ios.ipa`：已签名真机安装包，需要 `IOS_PROVISION_PROFILE` 指向匹配 `IOS_APP_ID` 的 `.mobileprovision`
+* `music-dl-ios-unsigned.ipa`：真机架构待签名包，仅用于用户自行重签，不能直接安装
 
-发布后可在 [Releases](https://github.com/guohuiyuan/go-music-dl/releases) 下载 `music-dl-ios-unsigned.ipa`。
+发布后可在 [Releases](https://github.com/guohuiyuan/go-music-dl/releases) 下载 `music-dl-ios-unsigned.ipa`；配置签名 secrets 后也会上传 `music-dl-ios.ipa`。
 
-> 注意：脚本会修改 Xcode 工具链目录（需要管理员权限），建议在受控开发环境中执行。
+> 注意：`music-dl-ios-unsigned.ipa` 不是可直接安装包，需要用户用自己的证书和 provisioning profile 重签。如果需要 GitHub Actions 自动发布已签名 iOS 包，需要配置 `IOS_PROVISION_PROFILE_BASE64`、`IOS_CERTIFICATE_P12_BASE64` 和 `IOS_CERTIFICATE_PASSWORD`。
 
 **如果你 Fork 了本仓库并希望使用自己的构建流：**
 
@@ -599,7 +603,7 @@ go-music-dl/
 
 * **前端**: Rust + Tao/Wry - 负责窗口管理、WebView 渲染和进程管理
 * **后端**: Go 二进制 - 嵌入到桌面应用中，提供 Web 服务和音乐功能
-* **通信**: HTTP 本地服务 - 前后端通过 `http://localhost:37777` 通信
+* **通信**: HTTP 本地服务 - 前后端通过 `http://127.0.0.1:37777` 通信
 
 详细说明请参考 [desktop/README.md](desktop/README.md)
 
