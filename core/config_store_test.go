@@ -83,8 +83,8 @@ func TestWebSettingsDefaultAndPersist(t *testing.T) {
 	t.Cleanup(resetConfigStateForTest)
 
 	defaults := GetWebSettings()
-	if defaults.EmbedDownload {
-		t.Fatalf("default EmbedDownload should be false")
+	if !defaults.EmbedDownload {
+		t.Fatalf("default EmbedDownload should be true")
 	}
 	if defaults.DownloadToLocal {
 		t.Fatalf("default DownloadToLocal should be false")
