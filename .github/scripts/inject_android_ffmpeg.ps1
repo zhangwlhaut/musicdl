@@ -70,7 +70,7 @@ function Add-ApkAssets {
     $relativePaths = New-Object System.Collections.Generic.List[string]
 
     foreach ($abi in $Abis) {
-        foreach ($tool in @("ffmpeg", "ffprobe")) {
+        foreach ($tool in @("ffmpeg", "ffprobe", "libc++_shared.so")) {
             $source = Join-Path $AssetsRootFull (Join-Path $abi $tool)
             if (-not (Test-Path $source)) {
                 throw "Missing bundled $tool for $abi at $source"

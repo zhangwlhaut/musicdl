@@ -21,6 +21,7 @@ func TestConfigureBundledFFmpegFromNativeLibraryDirSetsEnv(t *testing.T) {
 	t.Setenv("MUSIC_DL_FFMPEG", "")
 	t.Setenv("MUSIC_DL_FFPROBE", "")
 	t.Setenv("PATH", "")
+	t.Setenv("LD_LIBRARY_PATH", "")
 
 	if err := configureBundledFFmpegFromNativeLibraryDir(dir); err != nil {
 		t.Fatalf("configureBundledFFmpegFromNativeLibraryDir error: %v", err)
@@ -33,6 +34,9 @@ func TestConfigureBundledFFmpegFromNativeLibraryDirSetsEnv(t *testing.T) {
 	}
 	if got := os.Getenv("PATH"); !strings.HasPrefix(got, dir) {
 		t.Fatalf("PATH = %q, want prefix %q", got, dir)
+	}
+	if got := os.Getenv("LD_LIBRARY_PATH"); !strings.HasPrefix(got, dir) {
+		t.Fatalf("LD_LIBRARY_PATH = %q, want prefix %q", got, dir)
 	}
 }
 
@@ -61,6 +65,7 @@ func TestConfigureBundledFFmpegFromExtractDirSetsEnv(t *testing.T) {
 	t.Setenv("MUSIC_DL_FFMPEG", "")
 	t.Setenv("MUSIC_DL_FFPROBE", "")
 	t.Setenv("PATH", "")
+	t.Setenv("LD_LIBRARY_PATH", "")
 
 	if err := configureBundledFFmpegFromExtractDir(dir); err != nil {
 		t.Fatalf("configureBundledFFmpegFromExtractDir error: %v", err)
@@ -73,5 +78,8 @@ func TestConfigureBundledFFmpegFromExtractDirSetsEnv(t *testing.T) {
 	}
 	if got := os.Getenv("PATH"); !strings.HasPrefix(got, dir) {
 		t.Fatalf("PATH = %q, want prefix %q", got, dir)
+	}
+	if got := os.Getenv("LD_LIBRARY_PATH"); !strings.HasPrefix(got, dir) {
+		t.Fatalf("LD_LIBRARY_PATH = %q, want prefix %q", got, dir)
 	}
 }

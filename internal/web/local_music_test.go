@@ -151,6 +151,44 @@ func TestLocalMusicListScansDownloadDirWithFallbacks(t *testing.T) {
 	}
 }
 
+func TestApplyLocalProbeResultFillsMetadata(t *testing.T) {
+	track := &localMusicTrack{
+		Name:     "file-name",
+		Artist:   "unknown",
+		Album:    "",
+		Duration: 0,
+		Missing:  []string{"title", "artist", "album"},
+		Extra:    map[string]string{},
+	}
+
+	applyLocalProbeResult(track, &localProbeResult{
+		Duration: 186,
+		Bitrate:  320,
+		Title:    "Probe Title",
+		Artist:   "Probe Artist",
+		Album:    "Probe Album",
+	})
+
+	if track.Duration != 186 {
+		t.Fatalf("track.Duration = %d, want 186", track.Duration)
+	}
+	if track.Name != "Probe Title" {
+		t.Fatalf("track.Name = %q, want Probe Title", track.Name)
+	}
+	if track.Artist != "Probe Artist" {
+		t.Fatalf("track.Artist = %q, want Probe Artist", track.Artist)
+	}
+	if track.Album != "Probe Album" {
+		t.Fatalf("track.Album = %q, want Probe Album", track.Album)
+	}
+	if len(track.Missing) != 0 {
+		t.Fatalf("track.Missing = %v, want empty", track.Missing)
+	}
+	if track.Extra["duration"] != "186" || track.Extra["bitrate"] != "320" {
+		t.Fatalf("track.Extra = %v, want duration and bitrate", track.Extra)
+	}
+}
+
 func TestLocalMusicPageRendersSongListWithoutUnsupportedActions(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

@@ -137,7 +137,7 @@ func extractBundledFFmpegFromAssets(env jni.Env, context jni.Object, filesDir, a
 		return err
 	}
 
-	for _, tool := range []string{"ffmpeg", "ffprobe"} {
+	for _, tool := range []string{"ffmpeg", "ffprobe", "libc++_shared.so"} {
 		assetName := fmt.Sprintf("%s/%s/%s", bundledFFmpegAssetRoot, abi, tool)
 		targetPath := filepath.Join(targetDir, tool)
 		if err := extractAssetToFile(env, assetManager, assetName, targetPath); err != nil {

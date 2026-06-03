@@ -666,6 +666,9 @@ func buildLocalMusicTrack(rootAbs string, audioPath string) (*localMusicTrack, e
 		absPath:    absPath,
 		modTime:    info.ModTime(),
 	}
+	if probe, err := probeLocalMusicTrack(track); err == nil && probe != nil {
+		applyLocalProbeResult(track, probe)
+	}
 	cacheLocalMusicTrack(rootAbs, track)
 	return track, nil
 }
@@ -928,6 +931,37 @@ func probeLocalMusicTrack(track *localMusicTrack) (*localProbeResult, error) {
 	return result, nil
 }
 
+func applyLocalProbeResult(track *localMusicTrack, probe *localProbeResult) {
+	if track == nil || probe == nil {
+		return
+	}
+	if track.Extra == nil {
+		track.Extra = make(map[string]string)
+	}
+	if probe.Duration > 0 {
+		track.Duration = probe.Duration
+		track.Extra["duration"] = strconv.Itoa(probe.Duration)
+	}
+	if probe.Title != "" && containsString(track.Missing, "title") {
+		track.Name = probe.Title
+		track.Extra["title"] = probe.Title
+		track.Missing = removeString(track.Missing, "title")
+	}
+	if probe.Artist != "" && containsString(track.Missing, "artist") {
+		track.Artist = probe.Artist
+		track.Extra["artist"] = probe.Artist
+		track.Missing = removeString(track.Missing, "artist")
+	}
+	if probe.Album != "" && containsString(track.Missing, "album") {
+		track.Album = probe.Album
+		track.Extra["album"] = probe.Album
+		track.Missing = removeString(track.Missing, "album")
+	}
+	if probe.Bitrate > 0 {
+		track.Extra["bitrate"] = strconv.Itoa(probe.Bitrate)
+	}
+}
+
 func secondsFromProbe(raw string) int {
 	value, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
 	if err != nil || value <= 0 {
@@ -1174,25 +1208,7 @@ func inspectLocalMusicFile(id string, duration string) (gin.H, error) {
 	}
 
 	if probe, err := probeLocalMusicTrack(track); err == nil && probe != nil {
-		if probe.Duration > 0 {
-			track.Duration = probe.Duration
-			track.Extra["duration"] = strconv.Itoa(probe.Duration)
-		}
-		if probe.Title != "" && containsString(track.Missing, "title") {
-			track.Name = probe.Title
-			track.Extra["title"] = probe.Title
-		}
-		if probe.Artist != "" && containsString(track.Missing, "artist") {
-			track.Artist = probe.Artist
-			track.Extra["artist"] = probe.Artist
-		}
-		if probe.Album != "" && containsString(track.Missing, "album") {
-			track.Album = probe.Album
-			track.Extra["album"] = probe.Album
-		}
-		if probe.Bitrate > 0 {
-			track.Extra["bitrate"] = strconv.Itoa(probe.Bitrate)
-		}
+		applyLocalProbeResult(track, probe)
 	}
 	if rootAbs, err := filepath.Abs(localMusicDownloadDir()); err == nil {
 		cacheLocalMusicTrack(rootAbs, track)
@@ -1233,6 +1249,16 @@ func containsString(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+func removeString(values []string, target string) []string {
+	filtered := values[:0]
+	for _, value := range values {
+		if value != target {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
 }
 
 func localMusicSavedCollectionNames(trackID string) ([]string, error) {

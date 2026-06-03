@@ -33,6 +33,7 @@ func configureBundledFFmpegTools(dir, ffmpegName, ffprobeName string) error {
 	_ = os.Setenv("MUSIC_DL_FFMPEG", ffmpegPath)
 	_ = os.Setenv("MUSIC_DL_FFPROBE", ffprobePath)
 	prependPathDir(dir)
+	prependEnvPathDir("LD_LIBRARY_PATH", dir)
 	return nil
 }
 
@@ -49,15 +50,19 @@ func validateBundledTool(path string) error {
 }
 
 func prependPathDir(dir string) {
-	current := os.Getenv("PATH")
+	prependEnvPathDir("PATH", dir)
+}
+
+func prependEnvPathDir(name string, dir string) {
+	current := os.Getenv(name)
 	for _, entry := range filepath.SplitList(current) {
 		if filepath.Clean(entry) == dir {
 			return
 		}
 	}
 	if current == "" {
-		_ = os.Setenv("PATH", dir)
+		_ = os.Setenv(name, dir)
 		return
 	}
-	_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+current)
+	_ = os.Setenv(name, dir+string(os.PathListSeparator)+current)
 }
