@@ -159,10 +159,14 @@ func migrateLegacyCookies() error {
 }
 
 func defaultWebSettings() WebSettings {
+	defaultDir := DefaultWebDownloadDir
+	if env := strings.TrimSpace(os.Getenv("MUSIC_DL_DOWNLOAD_DIR")); env != "" {
+		defaultDir = env
+	}
 	return normalizeWebSettings(WebSettings{
 		EmbedDownload:            true,
 		DownloadToLocal:          false,
-		DownloadDir:              DefaultWebDownloadDir,
+		DownloadDir:              defaultDir,
 		DownloadFilenameTemplate: DefaultDownloadFilenameTemplate,
 		DisableFloatingLyrics:    false,
 		WebPageSize:              DefaultWebPageSize,
@@ -185,7 +189,18 @@ func defaultWebAuthSettings() WebAuthSettings {
 func normalizeWebSettings(settings WebSettings) WebSettings {
 	settings.DownloadDir = strings.TrimSpace(settings.DownloadDir)
 	if settings.DownloadDir == "" {
-		settings.DownloadDir = DefaultWebDownloadDir
+		if env := strings.TrimSpace(os.Getenv("MUSIC_DL_DOWNLOAD_DIR")); env != "" {
+			settings.DownloadDir = env
+		} else {
+			settings.DownloadDir = DefaultWebDownloadDir
+		}
+	} else if !filepath.IsAbs(settings.DownloadDir) && !strings.HasPrefix(settings.DownloadDir, `\\`) {
+		// 移动端:旧记录里可能是相对路径 "data/downloads",在 Android cwd 下不可写。
+		// 如果设置了 MUSIC_DL_DOWNLOAD_DIR(Android 启动时由 mobile.StartServer 注入),
+		// 用它覆盖,保证一定写入到 app 私有目录。
+		if env := strings.TrimSpace(os.Getenv("MUSIC_DL_DOWNLOAD_DIR")); env != "" {
+			settings.DownloadDir = env
+		}
 	}
 	settings.DownloadFilenameTemplate = strings.TrimSpace(settings.DownloadFilenameTemplate)
 	if settings.DownloadFilenameTemplate == "" {

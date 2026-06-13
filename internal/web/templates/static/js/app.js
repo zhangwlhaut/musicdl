@@ -398,6 +398,34 @@ function buildStreamURL(id, source, name, artist, album, cover, extra) {
     });
 }
 
+// 上报最近播放(供车载页 /music/car 复用)。失败静默,不影响播放。
+let __lastReportedRecentKey = null;
+function reportRecentPlay(audio) {
+    if (!audio || !audio.custom_id) return;
+    const id = String(audio.custom_id);
+    const source = String(audio.source || '');
+    if (!id || !source) return;
+    const key = id + '|' + source;
+    if (key === __lastReportedRecentKey) return;
+    __lastReportedRecentKey = key;
+    try {
+        fetch(`${API_ROOT}/recent`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                id: id,
+                source: source,
+                name: audio.name || '',
+                artist: audio.artist || '',
+                album: audio.album || '',
+                cover: audio.cover || '',
+                duration: parseInt(audio.duration) || 0,
+                extra: audio.extra || ''
+            })
+        }).catch(() => {});
+    } catch (e) { /* ignore */ }
+}
+
 function buildDownloadURL(id, source, name, artist, album, cover, extra) {
     return buildDownloadRequestURL(id, source, name, artist, album, cover, extra, {
         embed: webSettings.embedDownload,
@@ -3448,6 +3476,7 @@ ap.on('listswitch', (e) => {
     syncMediaSession(newAudio || getCurrentAPlayerAudio());
     scheduleMediaSessionSync(newAudio || getCurrentAPlayerAudio(), 180);
     KaraokeLyrics.load(newAudio || getCurrentAPlayerAudio());
+    reportRecentPlay(newAudio);
 });
 
 ap.on('play', () => {

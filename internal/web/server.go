@@ -406,6 +406,8 @@ func StartWithOptions(port string, opts StartOptions) {
 	api.GET("/videogen.css", func(c *gin.Context) { c.FileFromFS("templates/static/css/videogen.css", http.FS(templateFS)) })
 	api.GET("/videogen.js", func(c *gin.Context) { c.FileFromFS("templates/static/js/videogen.js", http.FS(templateFS)) })
 	api.GET("/app.js", func(c *gin.Context) { c.FileFromFS("templates/static/js/app.js", http.FS(templateFS)) })
+	api.GET("/car.css", func(c *gin.Context) { c.FileFromFS("templates/static/css/car.css", http.FS(templateFS)) })
+	api.GET("/car.js", func(c *gin.Context) { c.FileFromFS("templates/static/js/car.js", http.FS(templateFS)) })
 	configAPI := bindAuthMiddleware(api, opts)
 	api.Static("/videos", videoDir)
 
@@ -450,6 +452,7 @@ func StartWithOptions(port string, opts StartOptions) {
 	RegisterLocalMusicRoutes(api)
 	RegisterVideogenRoutes(api, videoDir)
 	RegisterUpdateRoutes(api)
+	RegisterCarRoutes(api)
 
 	listenAddr := opts.ListenHost + ":" + port
 	listener, err := net.Listen("tcp", listenAddr)

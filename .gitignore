@@ -25,5 +25,15 @@ desktop_app/ffmpeg/android/
 __debug_bin*
 *.keystore
 *.keystore.base64
+*.jks
+signing.properties
 .env
 .tmp-gogio-internal/
+.claude/
+
+# Android
+.gradle/
+.idea/
+local.properties
+build/
+**/build/

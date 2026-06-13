@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 与 Compose Theme.kt 保持一致:网易云车机版风格 -->
+    <color name="car_tr">#00000000</color>          <!-- 顶层背景 -->
+    <color name="car_bg">#0A0A0A</color>          <!-- 顶层背景 -->
+    <color name="car_surface">#1A1A1A</color>     <!-- TopBar / BottomBar / 卡片 -->
+    <color name="car_accent">#C20C0C</color>      <!-- 网易云红 -->
+    <color name="car_text">#F2F2F2</color>
+    <color name="car_text_muted">#A0A0A0</color>
+    <color name="car_card">#1A1A1A</color>
+</resources>

@@ -23,6 +23,9 @@
 <div class="settings-float" onclick="openSystemConfig()" title="系统配置">
     <i class="fa-solid fa-gear"></i>
 </div>
+<a class="settings-float" href="{{.Root}}/car" title="车载模式" style="right: 75px; text-decoration: none;">
+    <i class="fa-solid fa-car"></i>
+</a>
 <form id="auth-float-form" class="auth-float auth-login" action="{{.Root}}/logout" method="post" title="登录">
     <button id="auth-float-button" type="submit">
         <i id="auth-float-icon" class="fa-solid fa-right-to-bracket"></i>

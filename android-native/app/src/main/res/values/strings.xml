@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MusicDL</string>
+    <string name="loading_server">本地服务启动中…</string>
+    <string name="server_start_failed">本地服务启动失败</string>
+    <string name="retry">重试</string>
+    <string name="nav_home">首页</string>
+    <string name="nav_recent">最近</string>
+    <string name="nav_favorites">收藏</string>
+    <string name="nav_local">本地</string>
+    <string name="nav_search">搜索</string>
+    <string name="now_playing">正在播放</string>
+    <string name="prev">上一首</string>
+    <string name="next">下一首</string>
+    <string name="play">播放</string>
+    <string name="pause">暂停</string>
+</resources>

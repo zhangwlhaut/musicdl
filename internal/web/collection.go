@@ -192,6 +192,10 @@ func InitDB() {
 		panic("Failed to migrate database: " + err.Error())
 	}
 
+	if err := ensureRecentPlayTable(); err != nil {
+		panic("Failed to migrate recent_plays table: " + err.Error())
+	}
+
 	if err := migrateLegacyFavorites(dbPath); err != nil {
 		panic("Failed to migrate legacy favorites database: " + err.Error())
 	}

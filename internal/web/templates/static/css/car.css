@@ -1,0 +1,551 @@
+/* car.css — 车载横屏 PAD 模式专用样式
+   完全独立,不依赖 style.css。深色车载主题,大触控目标 ≥56px。 */
+
+:root {
+    --car-bg: #0f172a;
+    --car-bg-gradient: radial-gradient(at 10% 0%, rgba(16, 185, 129, 0.18) 0%, transparent 40%),
+                       radial-gradient(at 100% 100%, rgba(59, 130, 246, 0.12) 0%, transparent 40%),
+                       #0f172a;
+    --car-surface: rgba(30, 41, 59, 0.72);
+    --car-surface-hover: rgba(45, 58, 80, 0.85);
+    --car-surface-active: rgba(16, 185, 129, 0.18);
+    --car-border: rgba(255, 255, 255, 0.08);
+    --car-border-strong: rgba(255, 255, 255, 0.18);
+    --car-text-primary: #f8fafc;
+    --car-text-secondary: #cbd5e1;
+    --car-text-muted: #94a3b8;
+    --car-accent: #10b981;
+    --car-accent-strong: #34d399;
+    --car-accent-gradient: linear-gradient(135deg, #34d399 0%, #059669 100%);
+    --car-danger: #f87171;
+
+    --car-touch: 56px;
+    --car-touch-lg: 80px;
+    --car-touch-sm: 44px;
+    --car-radius: 16px;
+    --car-radius-lg: 22px;
+    --car-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+
+    --car-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background: var(--car-bg-gradient);
+    color: var(--car-text-primary);
+    font-family: var(--car-font);
+    font-size: 18px;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    user-select: none;
+}
+
+button { font-family: inherit; color: inherit; cursor: pointer; }
+button:focus, input:focus { outline: none; }
+
+/* ===== 主 grid 布局(横屏) ===== */
+.car-shell {
+    display: grid;
+    grid-template-columns: 220px 1fr 380px;
+    grid-template-rows: 60px 1fr;
+    grid-template-areas:
+        "topbar topbar topbar"
+        "sidebar content nowplay";
+    height: 100vh;
+    width: 100vw;
+    gap: 12px;
+    padding: 12px;
+}
+
+/* ===== 竖屏退化提示 ===== */
+@media (orientation: portrait) and (max-width: 900px) {
+    .car-shell { filter: blur(6px); pointer-events: none; }
+    body::after {
+        content: "🔄 请将设备旋转至横屏使用车载模式";
+        position: fixed; inset: 0;
+        display: grid; place-items: center; text-align: center; padding: 40px;
+        background: rgba(15, 23, 42, 0.92);
+        color: #f8fafc;
+        font-size: 26px;
+        font-weight: 600;
+        line-height: 1.5;
+        z-index: 9999;
+    }
+}
+
+/* ===== 顶栏 ===== */
+.car-topbar {
+    grid-area: topbar;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 18px;
+    background: var(--car-surface);
+    border: 1px solid var(--car-border);
+    border-radius: var(--car-radius);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+.car-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-weight: 700;
+    font-size: 20px;
+}
+.car-brand-icon {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: var(--car-accent-gradient);
+    border-radius: 10px;
+    font-size: 20px;
+    color: #fff;
+}
+.car-clock {
+    font-variant-numeric: tabular-nums;
+    font-size: 22px;
+    color: var(--car-text-secondary);
+    letter-spacing: 1px;
+}
+.car-topbar-actions { display: flex; gap: 10px; }
+
+.car-icon-btn {
+    width: var(--car-touch-sm); height: var(--car-touch-sm);
+    border: 1px solid var(--car-border);
+    background: transparent;
+    color: var(--car-text-secondary);
+    border-radius: 12px;
+    display: grid; place-items: center;
+    transition: all 0.15s ease;
+    text-decoration: none;
+}
+.car-icon-btn:hover { background: var(--car-surface-hover); color: var(--car-text-primary); }
+.car-icon-btn svg { width: 22px; height: 22px; }
+
+/* ===== 侧边栏 ===== */
+.car-sidebar {
+    grid-area: sidebar;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 16px 12px;
+    background: var(--car-surface);
+    border: 1px solid var(--car-border);
+    border-radius: var(--car-radius);
+    backdrop-filter: blur(16px);
+    overflow-y: auto;
+}
+.car-nav-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    height: var(--car-touch);
+    padding: 0 16px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 12px;
+    color: var(--car-text-secondary);
+    font-size: 17px;
+    font-weight: 500;
+    text-align: left;
+    transition: all 0.15s ease;
+}
+.car-nav-item svg { width: 24px; height: 24px; flex-shrink: 0; }
+.car-nav-item:hover {
+    background: var(--car-surface-hover);
+    color: var(--car-text-primary);
+}
+.car-nav-item.active {
+    background: var(--car-surface-active);
+    color: var(--car-accent-strong);
+    border-color: rgba(16, 185, 129, 0.4);
+}
+
+/* ===== 内容区 ===== */
+.car-content {
+    grid-area: content;
+    background: var(--car-surface);
+    border: 1px solid var(--car-border);
+    border-radius: var(--car-radius);
+    backdrop-filter: blur(16px);
+    overflow-y: auto;
+    padding: 20px 24px;
+}
+.car-content::-webkit-scrollbar { width: 10px; }
+.car-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 5px; }
+
+.car-section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 22px;
+    font-weight: 700;
+    margin: 0 0 16px 0;
+    color: var(--car-text-primary);
+}
+.car-section-title + .car-section-title { margin-top: 28px; }
+.car-section-action {
+    font-size: 15px;
+    font-weight: 500;
+    color: var(--car-accent-strong);
+    background: transparent;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    padding: 8px 16px;
+    border-radius: 999px;
+    min-height: 40px;
+}
+
+.car-loading, .car-empty {
+    display: grid;
+    place-items: center;
+    padding: 60px 20px;
+    color: var(--car-text-muted);
+    font-size: 18px;
+}
+
+/* ===== 磁贴网格 ===== */
+.car-tile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.car-tile {
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid var(--car-border);
+    border-radius: var(--car-radius);
+    overflow: hidden;
+    transition: all 0.15s ease;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+}
+.car-tile:hover {
+    transform: translateY(-4px);
+    border-color: rgba(16, 185, 129, 0.5);
+    box-shadow: var(--car-shadow);
+}
+.car-tile-cover {
+    aspect-ratio: 1 / 1;
+    background-size: cover;
+    background-position: center;
+    background-color: #1e293b;
+    position: relative;
+}
+.car-tile-cover::after {
+    content: "▶";
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.4);
+    color: #fff;
+    font-size: 36px;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+.car-tile:hover .car-tile-cover::after { opacity: 1; }
+.car-tile-meta {
+    padding: 12px 14px 14px;
+}
+.car-tile-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--car-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.car-tile-sub {
+    font-size: 13px;
+    color: var(--car-text-muted);
+    margin-top: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ===== 歌曲行 ===== */
+.car-song-list { display: flex; flex-direction: column; gap: 6px; }
+.car-song-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 14px;
+    background: rgba(15, 23, 42, 0.45);
+    border: 1px solid transparent;
+    border-radius: 14px;
+    transition: all 0.12s ease;
+    cursor: pointer;
+    min-height: 72px;
+}
+.car-song-row:hover {
+    background: rgba(30, 41, 59, 0.85);
+    border-color: var(--car-border);
+}
+.car-song-row.playing {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: rgba(16, 185, 129, 0.5);
+}
+.car-song-cover {
+    width: 52px; height: 52px;
+    border-radius: 10px;
+    background-size: cover;
+    background-position: center;
+    background-color: #1e293b;
+    flex-shrink: 0;
+}
+.car-song-meta { flex: 1; min-width: 0; }
+.car-song-name {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--car-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.car-song-artist {
+    font-size: 14px;
+    color: var(--car-text-muted);
+    margin-top: 3px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.car-song-duration {
+    font-size: 14px;
+    color: var(--car-text-muted);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+.car-song-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+.car-song-actions .car-mini-btn { padding: 0; min-width: var(--car-touch-sm); }
+
+/* ===== 搜索框 ===== */
+.car-search-bar {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+.car-search-input {
+    flex: 1;
+    height: var(--car-touch);
+    padding: 0 18px;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--car-border-strong);
+    border-radius: 14px;
+    color: var(--car-text-primary);
+    font-size: 17px;
+}
+.car-search-input::placeholder { color: var(--car-text-muted); }
+.car-search-input:focus { border-color: var(--car-accent); }
+.car-search-submit {
+    min-width: 96px;
+    height: var(--car-touch);
+    padding: 0 22px;
+    background: var(--car-accent-gradient);
+    color: #fff;
+    border: none;
+    border-radius: 14px;
+    font-size: 17px;
+    font-weight: 600;
+}
+
+/* ===== 右侧 Now Playing ===== */
+.car-now-playing {
+    grid-area: nowplay;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 20px;
+    background: var(--car-surface);
+    border: 1px solid var(--car-border);
+    border-radius: var(--car-radius);
+    backdrop-filter: blur(16px);
+    overflow: hidden;
+}
+.car-np-cover {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    max-height: 260px;
+    border-radius: var(--car-radius);
+    background-size: cover;
+    background-position: center;
+    background-color: #1e293b;
+    box-shadow: var(--car-shadow);
+    display: grid;
+    place-items: center;
+    color: rgba(255, 255, 255, 0.18);
+    flex-shrink: 0;
+    margin: 0 auto;
+}
+.car-np-cover-placeholder { width: 80px; height: 80px; }
+.car-np-cover.has-cover .car-np-cover-placeholder { display: none; }
+
+.car-np-info { text-align: center; }
+.car-np-title {
+    font-size: 19px;
+    font-weight: 700;
+    color: var(--car-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.car-np-artist {
+    font-size: 14px;
+    color: var(--car-text-muted);
+    margin-top: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 进度条 */
+.car-np-progress { padding: 0 4px; }
+#car-seek {
+    width: 100%;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    background: rgba(255,255,255,0.12);
+    border-radius: 3px;
+    cursor: pointer;
+    background-image: linear-gradient(var(--car-accent), var(--car-accent));
+    background-repeat: no-repeat;
+}
+#car-seek::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px; height: 18px;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+    cursor: pointer;
+}
+.car-np-times {
+    display: flex;
+    justify-content: space-between;
+    font-size: 13px;
+    color: var(--car-text-muted);
+    margin-top: 6px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* 大播放控件 */
+.car-np-controls {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+}
+.car-btn {
+    border: none;
+    background: rgba(255,255,255,0.06);
+    color: var(--car-text-primary);
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    transition: all 0.12s ease;
+}
+.car-btn:hover { background: rgba(255,255,255,0.12); transform: scale(1.05); }
+.car-btn:active { transform: scale(0.95); }
+.car-btn--ghost {
+    width: var(--car-touch); height: var(--car-touch);
+}
+.car-btn--ghost svg { width: 28px; height: 28px; }
+.car-btn--play {
+    width: var(--car-touch-lg); height: var(--car-touch-lg);
+    background: var(--car-accent-gradient);
+    box-shadow: 0 8px 24px rgba(16, 185, 129, 0.4);
+}
+.car-btn--play:hover { background: var(--car-accent-gradient); }
+.car-btn--play svg { width: 36px; height: 36px; }
+
+.car-np-extra {
+    display: flex;
+    gap: 8px;
+    justify-content: space-around;
+}
+.car-mini-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: var(--car-touch);
+    min-height: var(--car-touch);
+    padding: 8px 12px;
+    background: transparent;
+    border: 1px solid var(--car-border);
+    border-radius: 12px;
+    color: var(--car-text-secondary);
+    font-size: 12px;
+    transition: all 0.12s ease;
+}
+.car-mini-btn:hover { background: var(--car-surface-hover); color: var(--car-text-primary); }
+.car-mini-btn svg { width: 22px; height: 22px; }
+.car-mini-btn.active { color: var(--car-accent-strong); border-color: rgba(16, 185, 129, 0.5); }
+
+/* 队列 */
+.car-np-queue {
+    flex: 1;
+    overflow-y: auto;
+    margin-top: 8px;
+    padding: 8px 0;
+    border-top: 1px solid var(--car-border);
+    display: none;
+}
+.car-np-queue.visible { display: block; }
+.car-queue-empty { padding: 20px; text-align: center; color: var(--car-text-muted); font-size: 14px; }
+.car-queue-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    cursor: pointer;
+    min-height: 52px;
+}
+.car-queue-item:hover { background: rgba(255,255,255,0.05); }
+.car-queue-item.playing { background: rgba(16, 185, 129, 0.15); }
+.car-queue-item-meta { flex: 1; min-width: 0; }
+.car-queue-item-name { font-size: 14px; color: var(--car-text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.car-queue-item-artist { font-size: 12px; color: var(--car-text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ===== 隐藏 APlayer 原生 UI ===== */
+.car-aplayer-hidden {
+    position: fixed;
+    bottom: -9999px;
+    left: -9999px;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    pointer-events: none;
+    opacity: 0;
+}
+
+/* ===== 滚动条统一深色 ===== */
+.car-sidebar::-webkit-scrollbar,
+.car-np-queue::-webkit-scrollbar { width: 6px; }
+.car-sidebar::-webkit-scrollbar-thumb,
+.car-np-queue::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+
+/* ===== 中型屏幕折叠侧栏文字 ===== */
+@media (max-width: 1100px) and (orientation: landscape) {
+    .car-shell {
+        grid-template-columns: 80px 1fr 340px;
+    }
+    .car-nav-item span:not(.car-brand-text) { display: none; }
+    .car-nav-item { justify-content: center; padding: 0; }
+}

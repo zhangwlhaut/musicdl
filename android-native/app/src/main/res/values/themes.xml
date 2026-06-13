@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.MusicDLCar" parent="android:Theme.Material.NoActionBar">
+        <!-- 窗口底色 = Compose 的 background -->
+        <item name="android:windowBackground">@color/car_bg</item>
+        <!-- 状态栏 / 导航栏 = TopBar / BottomBar 的 surface 色,与顶栏融为一体 -->
+        <item name="android:statusBarColor">@color/car_surface</item>
+        <item name="android:navigationBarColor">@color/car_surface</item>
+        <!-- 深色底:状态栏图标用浅色 -->
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
+    </style>
+</resources>
