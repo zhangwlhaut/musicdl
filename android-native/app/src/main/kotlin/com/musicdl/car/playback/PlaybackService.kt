@@ -2,9 +2,12 @@ package com.musicdl.car.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import android.content.Context
+import android.os.PowerManager
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
@@ -48,9 +51,15 @@ class PlaybackService : MediaLibraryService() {
     private val repo = MusicRepository()
 
     private lateinit var session: MediaLibrarySession
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
+
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MusicDL:PlaybackWakeLock").apply {
+            setReferenceCounted(false)
+        }
 
         val baseDataSourceFactory = DefaultDataSource.Factory(
             this,
@@ -79,6 +88,7 @@ class PlaybackService : MediaLibraryService() {
                 /* handleAudioFocus = */ true
             )
             .setHandleAudioBecomingNoisy(true)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
 
         session = MediaLibrarySession.Builder(this, player!!, librarySessionCallback)
@@ -87,6 +97,28 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession = session
+
+    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
+        val p = player
+        val forceForeground = startInForegroundRequired || (p != null && p.playWhenReady && p.playbackState != Player.STATE_ENDED)
+        super.onUpdateNotification(session, forceForeground)
+
+        if (forceForeground) {
+            try {
+                wakeLock?.acquire(30 * 60 * 1000L) // 30 mins safe timeout
+            } catch (e: Exception) {
+                android.util.Log.e("PlaybackService", "Failed to acquire wake lock", e)
+            }
+        } else {
+            try {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PlaybackService", "Failed to release wake lock", e)
+            }
+        }
+    }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val p = player
@@ -97,6 +129,14 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+        wakeLock = null
         session.release()
         player?.release()
         player = null

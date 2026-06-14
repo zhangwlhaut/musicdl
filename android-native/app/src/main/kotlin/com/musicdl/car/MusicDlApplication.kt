@@ -23,6 +23,7 @@ class MusicDlApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        com.musicdl.car.playback.PlaybackLogger.init(this)
 
         appScope.launch {
             try {

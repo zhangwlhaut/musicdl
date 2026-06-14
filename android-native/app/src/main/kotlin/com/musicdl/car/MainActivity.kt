@@ -161,6 +161,7 @@ private fun AppContent(playback: PlaybackController) {
     val dur by playback.durationMs.collectAsState()
     val shuffleEnabled by playback.shuffleEnabled.collectAsState()
     val repeatMode by playback.repeatMode.collectAsState()
+    val playlistQueue by playback.playlistQueue.collectAsState()
 
     // Lyric ViewModel — driven from PlaybackController.
     val lyricVm: LyricViewModel = viewModel()
@@ -421,6 +422,9 @@ private fun AppContent(playback: PlaybackController) {
                 currentLineIndex = currentLineIndex,
                 shuffleEnabled = shuffleEnabled,
                 repeatMode = repeatMode,
+                playlistQueue = playlistQueue,
+                currentMediaId = mediaId,
+                onPlayQueueIndex = playback::playQueueIndex,
                 onPlayPause = playback::togglePlayPause,
                 onNext = playback::next,
                 onPrevious = playback::previous,

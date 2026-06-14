@@ -45,6 +45,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.APP_MUSIC" />
             </intent-filter>
+            <!-- 允许通过标准音乐播放器意图启动 -->
+            <intent-filter>
+                <action android:name="android.intent.action.MUSIC_PLAYER" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.APP_MUSIC" />
+            </intent-filter>
+            <!-- 允许语音助手触发语音搜索播放 -->
+            <intent-filter>
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <service
@@ -56,5 +67,22 @@
                 <action android:name="android.media.browse.MediaBrowserService" />
             </intent-filter>
         </service>
+
+        <!-- 声明媒体按钮接收器，允许系统通过硬件按钮或语音指令（如播放/暂停）在后台或被杀死时唤醒并控制应用 -->
+        <receiver
+            android:name="androidx.media3.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- 声明为车载/汽车多媒体应用 -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+        <meta-data
+            android:name="android.car.application"
+            android:resource="@xml/automotive_app_desc" />
     </application>
 </manifest>

@@ -133,6 +133,9 @@ class PlaybackController(context: Context) {
     private val _repeatMode = MutableStateFlow(Player.REPEAT_MODE_OFF)
     val repeatMode: StateFlow<Int> = _repeatMode.asStateFlow()
 
+    private val _playlistQueue = MutableStateFlow<List<Song>>(emptyList())
+    val playlistQueue: StateFlow<List<Song>> = _playlistQueue.asStateFlow()
+
     fun connect() {
         if (controller != null) return
         val token = SessionToken(appContext, ComponentName(appContext, PlaybackService::class.java))
@@ -333,6 +336,15 @@ class PlaybackController(context: Context) {
 
     fun playQueue(songs: List<Song>) = playNow(songs, 0)
 
+    fun playQueueIndex(index: Int) {
+        val p = player ?: return
+        if (index in 0 until p.mediaItemCount) {
+            p.seekTo(index, 0L)
+            p.prepare()
+            p.play()
+        }
+    }
+
     fun addToQueue(songs: List<Song>) {
         val p = PlaybackService.player ?: controller ?: return
         p.addMediaItems(songs.map { it.toMediaItem() })
@@ -367,10 +379,39 @@ class PlaybackController(context: Context) {
             if (isPlaying) {
                 consecutiveFailureCount = 0
             }
+            PlaybackLogger.log("onIsPlayingChanged: isPlaying=$isPlaying, playWhenReady=${player?.playWhenReady}, playbackState=${player?.playbackState}")
+        }
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            val stateStr = when (playbackState) {
+                Player.STATE_IDLE -> "IDLE"
+                Player.STATE_BUFFERING -> "BUFFERING"
+                Player.STATE_READY -> "READY"
+                Player.STATE_ENDED -> "ENDED"
+                else -> "UNKNOWN"
+            }
+            PlaybackLogger.log("onPlaybackStateChanged: state=$stateStr, isPlaying=${player?.isPlaying}")
+        }
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            val reasonStr = when (reason) {
+                Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST -> "USER_REQUEST"
+                Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_FOCUS_LOSS -> "AUDIO_FOCUS_LOSS"
+                Player.PLAY_WHEN_READY_CHANGE_REASON_AUDIO_BECOMING_NOISY -> "AUDIO_BECOMING_NOISY"
+                Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM -> "END_OF_MEDIA_ITEM"
+                Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE -> "REMOTE"
+                else -> "UNKNOWN"
+            }
+            PlaybackLogger.log("onPlayWhenReadyChanged: playWhenReady=$playWhenReady, reason=$reasonStr")
         }
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             refreshFromController()
-            android.util.Log.d("PlaybackController", "onMediaItemTransition: mediaId=${mediaItem?.mediaId}, reason=$reason")
+            val reasonStr = when (reason) {
+                Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT -> "REPEAT"
+                Player.MEDIA_ITEM_TRANSITION_REASON_AUTO -> "AUTO"
+                Player.MEDIA_ITEM_TRANSITION_REASON_SEEK -> "SEEK"
+                Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED -> "PLAYLIST_CHANGED"
+                else -> "UNKNOWN"
+            }
+            PlaybackLogger.log("onMediaItemTransition: mediaId=${mediaItem?.mediaId}, title=${mediaItem?.mediaMetadata?.title}, reason=$reasonStr")
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_SEEK || 
                 reason == Player.MEDIA_ITEM_TRANSITION_REASON_PLAYLIST_CHANGED) {
                 if (!isProgrammaticSkip) {
@@ -394,7 +435,7 @@ class PlaybackController(context: Context) {
             savePlaybackState()
         }
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-            android.util.Log.e("PlaybackController", "onPlayerError: codeName=${error.errorCodeName}, errorCode=${error.errorCode}, message=${error.message}", error)
+            PlaybackLogger.logError("onPlayerError: errorCodeName=${error.errorCodeName}, errorCode=${error.errorCode}, message=${error.message}", error)
             tryAutoSwitchSource(error)
         }
     }
@@ -507,6 +548,7 @@ class PlaybackController(context: Context) {
             android.util.Log.d("PlaybackController", "switchSource: replacing item at $failingIndex with ${replacement.source} (${replacement.id})")
             // 队列里把失败的歌替换成新源的歌,继续从同一位置播放。
             curPlayer.replaceMediaItem(failingIndex, replacement.toMediaItem())
+            curPlayer.seekTo(failingIndex, 0L)
             curPlayer.prepare()
             curPlayer.play()
             Toaster.show("已切换到「${replacement.source}」")
@@ -525,6 +567,28 @@ class PlaybackController(context: Context) {
         _durationMs.value = p.duration.coerceAtLeast(0)
         _shuffleEnabled.value = p.shuffleModeEnabled
         _repeatMode.value = p.repeatMode
+
+        // 更新当前播放队列状态
+        val count = p.mediaItemCount
+        val list = ArrayList<Song>(count)
+        for (i in 0 until count) {
+            val item = p.getMediaItemAt(i)
+            val parsed = parseMediaId(item.mediaId)
+            val id = parsed?.first ?: item.mediaId
+            val source = parsed?.second ?: ""
+            val md = item.mediaMetadata
+            list.add(
+                Song(
+                    id = id,
+                    source = source,
+                    name = md.title?.toString() ?: "未知歌曲",
+                    artist = md.artist?.toString() ?: "未知歌手",
+                    album = md.albumTitle?.toString(),
+                    cover = md.artworkUri?.toString()
+                )
+            )
+        }
+        _playlistQueue.value = list
     }
 
     private fun startPositionPump() {

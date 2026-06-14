@@ -4,6 +4,7 @@ package com.musicdl.car.ui.component
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,9 +31,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.musicdl.car.data.dto.LyricLine
+import com.musicdl.car.data.dto.Song
+import com.musicdl.car.playback.parseMediaId
 import com.musicdl.car.ui.AppDimensions
 import com.musicdl.car.ui.WindowSize
 import com.musicdl.car.ui.currentWindow
+import androidx.compose.material.icons.filled.QueueMusic
+import androidx.compose.foundation.lazy.itemsIndexed
 
 /**
  * 全屏正在播放页 — 网易云车机风格,响应式:
@@ -53,6 +58,9 @@ fun FullPlayer(
     currentLineIndex: Int,
     shuffleEnabled: Boolean,
     repeatMode: Int,
+    playlistQueue: List<Song>,
+    currentMediaId: String?,
+    onPlayQueueIndex: (Int) -> Unit,
     onPlayPause: () -> Unit,
     onNext: () -> Unit,
     onPrevious: () -> Unit,
@@ -65,13 +73,14 @@ fun FullPlayer(
     val win = currentWindow()
     val twoCols = win.canSplitTwoCols
     val hPadding = AppDimensions.contentPadding(win)
+    var showQueue by remember { mutableStateOf(false) }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
     ) {
-        // 顶栏:左折叠按钮 + 居中标题
+        // 顶栏:左折叠按钮 + 居中标题 + 右播放列表按钮
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -95,7 +104,14 @@ fun FullPlayer(
                 fontWeight = FontWeight.Medium,
             )
             Spacer(Modifier.weight(1f))
-            Spacer(Modifier.width(48.dp))
+            IconButton(onClick = { showQueue = true }, modifier = Modifier.size(48.dp)) {
+                Icon(
+                    Icons.Default.QueueMusic,
+                    contentDescription = "当前播放列表",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(26.dp),
+                )
+            }
         }
 
         // 主体
@@ -171,6 +187,117 @@ fun FullPlayer(
                         .fillMaxWidth()
                         .weight(0.45f),
                 )
+            }
+        }
+    }
+
+    if (showQueue) {
+        ModalBottomSheet(
+            onDismissRequest = { showQueue = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            dragHandle = { BottomSheetDefaults.DragHandle() },
+            containerColor = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight(0.6f)
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "播放列表 (${playlistQueue.size}首)",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    TextButton(onClick = { showQueue = false }) {
+                        Text("关闭", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth()
+                ) {
+                    itemsIndexed(playlistQueue) { idx, song ->
+                        val isCurrent = currentMediaId != null && 
+                                        parseMediaId(currentMediaId)?.first == song.id &&
+                                        parseMediaId(currentMediaId)?.second == song.source
+                                        
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(
+                                    if (isCurrent) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                    else Color.Transparent
+                                )
+                                .clickable {
+                                    onPlayQueueIndex(idx)
+                                    showQueue = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isCurrent) {
+                                Text(
+                                    "▶",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.width(24.dp)
+                                )
+                            } else {
+                                Text(
+                                    "${idx + 1}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.width(24.dp)
+                                )
+                            }
+                            
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = song.name,
+                                    fontSize = 15.sp,
+                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isCurrent) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    text = song.artist ?: "未知歌手",
+                                    fontSize = 12.sp,
+                                    color = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            
+                            Spacer(Modifier.width(8.dp))
+                            
+                            if (song.source.isNotBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = song.source.uppercase(),
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -284,8 +411,31 @@ private fun LeftPanel(
             colors = SliderDefaults.colors(
                 thumbColor = MaterialTheme.colorScheme.primary,
                 activeTrackColor = MaterialTheme.colorScheme.primary,
-                inactiveTrackColor = MaterialTheme.colorScheme.outline,
+                inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
             ),
+            thumb = {
+                Box(
+                    modifier = Modifier.size(20.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                    )
+                }
+            },
+            track = { sliderState ->
+                SliderDefaults.Track(
+                    sliderState = sliderState,
+                    modifier = Modifier.height(4.dp),
+                    colors = SliderDefaults.colors(
+                        activeTrackColor = MaterialTheme.colorScheme.primary,
+                        inactiveTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f),
+                    )
+                )
+            }
         )
         Row(
             modifier = Modifier.fillMaxWidth()
