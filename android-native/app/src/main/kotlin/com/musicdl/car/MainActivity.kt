@@ -53,6 +53,8 @@ import com.musicdl.car.ui.viewmodel.LyricViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import android.content.Intent
+import androidx.lifecycle.lifecycleScope
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
@@ -95,6 +97,138 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        android.util.Log.d("MainActivity", "handleIntent: action = ${intent?.action}, data = ${intent?.data}")
+        intent?.extras?.let { extras ->
+            for (key in extras.keySet()) {
+                android.util.Log.d("MainActivity", "  extra: $key -> ${extras.get(key)}")
+            }
+        }
+
+        val uri = intent?.data
+        if (uri != null) {
+            val path = uri.path ?: ""
+            val scheme = uri.scheme ?: ""
+
+            if (scheme == "orpheus" || scheme == "orpheuswidget") {
+                android.util.Log.d("MainActivity", "handleIntent: matched netease scheme")
+                var songId: String? = null
+
+                val host = uri.host ?: ""
+                if (host == "song" || path.startsWith("/song")) {
+                    songId = uri.lastPathSegment
+                }
+                if (songId.isNullOrBlank() || !songId.all { it.isDigit() }) {
+                    songId = uri.getQueryParameter("id") ?: uri.getQueryParameter("musicId")
+                }
+
+                android.util.Log.d("MainActivity", "handleIntent: parsed songId = $songId")
+                if (!songId.isNullOrBlank() && songId.all { it.isDigit() }) {
+                    lifecycleScope.launch {
+                        var retry = 0
+                        while (!playback.isConnected() && retry < 30) {
+                            kotlinx.coroutines.delay(100)
+                            retry++
+                        }
+                        val song = Song(
+                            id = songId,
+                            source = "netease",
+                            name = "语音播放歌曲",
+                            artist = "网易云音乐"
+                        )
+                        playback.playNow(listOf(song), 0)
+                        android.util.Log.d("MainActivity", "handleIntent: playing song $songId via playback.playNow")
+                    }
+                }
+                return
+            }
+        }
+
+        // Check if there is a search query in intent extras or data query parameters
+        val query = extractQueryFromIntent(intent)
+        if (!query.isNullOrBlank()) {
+            android.util.Log.d("MainActivity", "handleIntent: extracted search query = $query")
+            lifecycleScope.launch {
+                var retry = 0
+                while (!playback.isConnected() && retry < 30) {
+                    kotlinx.coroutines.delay(100)
+                    retry++
+                }
+                try {
+                    val repo = MusicRepository()
+                    val result = repo.search(query).getOrNull()
+                    val songs = result?.songsSafe
+                    if (!songs.isNullOrEmpty()) {
+                        playback.playNow(songs, 0)
+                        android.util.Log.d("MainActivity", "handleIntent: playing searched song: ${songs[0].name}")
+                    } else {
+                        android.util.Log.d("MainActivity", "handleIntent: no songs found for query: $query")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("MainActivity", "Error searching and playing from intent", e)
+                }
+            }
+        }
+    }
+
+    private fun extractQueryFromIntent(intent: Intent?): String? {
+        if (intent == null) return null
+        val extras = intent.extras
+        
+        val queryKeys = arrayOf(
+            "query", "keyword", "search_word", "searchKey", "EXTRA_SEARCH_KEY",
+            "search_key", "key", "text", "search_text", "EXTRA_SEARCH_WORD",
+            "voice_query", "name", "songName", "song_name", "title", "audio_name"
+        )
+        
+        if (extras != null) {
+            for (key in queryKeys) {
+                val v = extras.getString(key) ?: extras.get(key)?.toString()
+                if (!v.isNullOrBlank()) {
+                    val artistKeys = arrayOf("artist", "artist_name", "artistName", "singer", "singer_name")
+                    var artistVal: String? = null
+                    for (aKey in artistKeys) {
+                        val a = extras.getString(aKey) ?: extras.get(aKey)?.toString()
+                        if (!a.isNullOrBlank()) {
+                            artistVal = a
+                            break
+                        }
+                    }
+                    return if (!artistVal.isNullOrBlank()) "$v $artistVal" else v
+                }
+            }
+        }
+        
+        val uri = intent.data
+        if (uri != null) {
+            for (key in queryKeys) {
+                val v = uri.getQueryParameter(key)
+                if (!v.isNullOrBlank()) {
+                    val artistKeys = arrayOf("artist", "artist_name", "artistName", "singer", "singer_name")
+                    var artistVal: String? = null
+                    for (aKey in artistKeys) {
+                        val a = uri.getQueryParameter(aKey)
+                        if (!a.isNullOrBlank()) {
+                            artistVal = a
+                            break
+                        }
+                    }
+                    return if (!artistVal.isNullOrBlank()) "$v $artistVal" else v
+                }
+            }
+        }
+        
+        return null
     }
 
     override fun onDestroy() {

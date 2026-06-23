@@ -51,10 +51,18 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.APP_MUSIC" />
             </intent-filter>
-            <!-- 允许语音助手触发语音搜索播放 -->
+            <!-- 允许通过系统媒体搜索并播放意图启动 -->
             <intent-filter>
                 <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
                 <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <!-- 允许通过网易云音乐的 URL Scheme 唤起播放 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="orpheus" />
+                <data android:scheme="orpheuswidget" />
             </intent-filter>
         </activity>
 
@@ -68,12 +76,84 @@
             </intent-filter>
         </service>
 
+        <service
+            android:name=".playback.CMApiService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.netease.cloudmusic.third.api.CMApiService" />
+            </intent-filter>
+        </service>
+
         <!-- 声明媒体按钮接收器，允许系统通过硬件按钮或语音指令（如播放/暂停）在后台或被杀死时唤醒并控制应用 -->
         <receiver
             android:name="androidx.media3.session.MediaButtonReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+        <!-- Baidu DuerOS, Geely ECARX, CMCC, and standard voice launch handler -->
+        <activity
+            android:name="com.netease.cloudmusic.audio.launch.IotRedirectActivity"
+            android:theme="@style/Theme.MusicDLCar"
+            android:launchMode="singleInstance"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="dueros/audio" android:scheme="dueros" android:host="netease.audioplayer" android:path="/player" />
+                <data android:mimeType="cmcc/audio" android:scheme="cmcc" android:host="netease.audioplayer" android:path="/player" />
+                <data android:mimeType="voice/audio" android:scheme="voice" android:host="netease.audioplayer" android:path="/player" />
+                <data android:mimeType="voice/audio" android:scheme="voice" android:host="netease.audioplayer" android:path="/player/v2" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="ecarx.intent.action.ECARX_VR_APP_OPEN" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="ecarx" android:host="vr.com" android:path="/网易云音乐" />
+            </intent-filter>
+        </activity>
+
+        <!-- BYD voice control broadcast receiver -->
+        <receiver
+            android:name="com.netease.cloudmusic.iot.byd.broadcast.BydControlBroadcastReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.byd.action.FUNCTION_UPDATE_RESULT" />
+                <action android:name="byd.intent.action.MEDIA_BUTTON" />
+                <action android:name="byd.intent.action.MEDIA_MODE" />
+                <action android:name="com.byd.action.AUTOVOICE_SEARCH_PLUS" />
+                <action android:name="com.byd.action.AUTOVOICE_SEARCH" />
+                <action android:name="com.byd.action.AUTOVOICE_COLLECT" />
+                <action android:name="com.byd.action.AUTOVOICE_UNCOLLECT" />
+                <action android:name="com.byd.action.AUTOVOICE_REWIND" />
+                <action android:name="com.byd.action.AUTOVOICE_FORWARD" />
+                <action android:name="com.byd.action.AUTOVOICE_PLAY_MODE" />
+                <action android:name="com.byd.action.AUTOVOICE_OPEN_LIST" />
+                <action android:name="com.byd.action.AUTOVOICE_CLOSE_LIST" />
+                <action android:name="com.byd.action.AUTOVOICE_QUIT" />
+                <action android:name="com.byd.action.AUTOVOICE_PLAY_LIKE" />
+                <action android:name="com.byd.action.AUTOVOICE_RECOMMEND" />
+                <action android:name="com.byd.action.AUTOVOICE_PLAY_FAVORITE" />
+                <action android:name="com.byd.action.AUTOVOICE_PLAY_SONG_SHEET" />
+                <action android:name="com.byd.action.AUTOVOICE_PLAY_LATELY" />
+                <action android:name="com.byd.action.AUTOVOICE_PLAY_RANDOM" />
+                <action android:name="com.byd.action.AUTOVOICE_BOOK" />
+                <action android:name="com.byd.action.AUTOVOICE_UNBOOK" />
+                <action android:name="com.byd.action.AUTOVOICE_OPEN_LYRIC" />
+                <action android:name="com.byd.action.AUTOVOICE_CLOSE_LYRIC" />
+                <action android:name="com.byd.action.AUTOVOICE_JUMP_TO" />
+                <action android:name="com.byd.action.AUTOVOICE_FULL_SCREEN" />
+                <action android:name="com.byd.action.AUTOVOICE_UNFULL_SCREEN" />
+                <action android:name="com.byd.action.AUTOVOICE_SPEED_ADJUST" />
+                <action android:name="com.byd.action.AUTOVOICE_SKIP_TITLE" />
+                <action android:name="com.byd.action.AUTOVOICE_SKIP_END" />
+                <action android:name="com.byd.action.AUTOVOICE_DOWNLOAD" />
+                <action android:name="com.byd.action.AUTOVOICE_UNDOWNLOAD" />
+                <action android:name="com.byd.action.AUTOVOICE_DEFINITION_SET" />
+                <action android:name="com.byd.action.AUTOVOICE_QUALITY" />
+                <action android:name="com.byd.action.AUTOVOICE_PLAY_BOOK" />
+                <action android:name="com.byd.action.AUTOVOICE_PLAY_DOWNLOAD" />
             </intent-filter>
         </receiver>
 

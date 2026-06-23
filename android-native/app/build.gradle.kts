@@ -17,15 +17,16 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.musicdl.car"
+        applicationId = "com.netease.cloudmusic.iot"
         minSdk = 21
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 6002081
+        versionName = "6.2.81"
     }
 
     buildFeatures {
         compose = true
+        aidl = true
     }
 
     composeOptions {
@@ -77,6 +78,11 @@ android {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1,DEPENDENCIES,LICENSE,NOTICE}"
         }
+    }
+
+    lint {
+        abortOnError = false
+        checkReleaseBuilds = false
     }
 }
 

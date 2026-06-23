@@ -7,12 +7,15 @@ import android.os.PowerManager
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.session.LibraryResult
 import androidx.media3.session.MediaLibraryService
+import androidx.media3.session.MediaLibraryService.LibraryParams
 import androidx.media3.session.MediaSession
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -22,6 +25,7 @@ import com.musicdl.car.data.MusicRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.guava.future
 
 /**
@@ -91,6 +95,21 @@ class PlaybackService : MediaLibraryService() {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
 
+        player?.addListener(object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                android.util.Log.d("PlaybackService", "onPlayWhenReadyChanged: playWhenReady=$playWhenReady, reason=$reason")
+            }
+            override fun onPlaybackStateChanged(state: Int) {
+                android.util.Log.d("PlaybackService", "onPlaybackStateChanged: state=$state")
+            }
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                android.util.Log.d("PlaybackService", "onIsPlayingChanged: isPlaying=$isPlaying")
+            }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                android.util.Log.e("PlaybackService", "onPlayerError: ", error)
+            }
+        })
+
         session = MediaLibrarySession.Builder(this, player!!, librarySessionCallback)
             .setSessionActivity(activityPendingIntent())
             .build()
@@ -147,36 +166,270 @@ class PlaybackService : MediaLibraryService() {
 
     private val librarySessionCallback = object : MediaLibrarySession.Callback {
 
+        override fun onConnect(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo
+        ): MediaSession.ConnectionResult {
+            android.util.Log.d("PlaybackService", "onConnect: packageName=${controller.packageName}, uid=${controller.uid}")
+            return super.onConnect(session, controller)
+        }
+
+        override fun onCustomCommand(
+            session: MediaSession,
+            controller: MediaSession.ControllerInfo,
+            customCommand: androidx.media3.session.SessionCommand,
+            args: android.os.Bundle
+        ): ListenableFuture<androidx.media3.session.SessionResult> {
+            android.util.Log.d("PlaybackService", "onCustomCommand: action=${customCommand.customAction}")
+            return super.onCustomCommand(session, controller, customCommand, args)
+        }
+
+
+        private fun logBundle(bundle: android.os.Bundle?, prefix: String = "  ") {
+            if (bundle == null) return
+            try {
+                for (key in bundle.keySet()) {
+                    val value = bundle.get(key)
+                    if (value is android.os.Bundle) {
+                        android.util.Log.d("PlaybackService", "$prefix$key -> Bundle:")
+                        logBundle(value, "$prefix  ")
+                    } else {
+                        android.util.Log.d("PlaybackService", "$prefix$key -> $value")
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("PlaybackService", "Failed to log bundle", e)
+            }
+        }
+
+        private val searchResultsCache = java.util.concurrent.ConcurrentHashMap<String, List<MediaItem>>()
+
+        override fun onGetLibraryRoot(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<MediaItem>> {
+            android.util.Log.d("PlaybackService", "onGetLibraryRoot from packageName=${browser.packageName}")
+            val rootMediaItem = MediaItem.Builder()
+                .setMediaId("ROOT")
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle("Root")
+                        .setIsBrowsable(true)
+                        .setIsPlayable(false)
+                        .build()
+                )
+                .build()
+            return Futures.immediateFuture(LibraryResult.ofItem(rootMediaItem, params))
+        }
+
+        override fun onGetChildren(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            parentId: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<com.google.common.collect.ImmutableList<MediaItem>>> {
+            android.util.Log.d("PlaybackService", "onGetChildren parentId='$parentId'")
+            return Futures.immediateFuture(LibraryResult.ofItemList(listOf(), params))
+        }
+
+        override fun onSearch(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            query: String,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<Void>> {
+            android.util.Log.d("PlaybackService", "onSearch query='$query' from packageName=${browser.packageName}")
+            return serviceScope.future {
+                try {
+                    val result = repo.search(query).getOrNull()
+                    val songs = result?.songsSafe
+                    if (!songs.isNullOrEmpty()) {
+                        val mediaItems = songs.map { it.toMediaItem() }
+                        searchResultsCache[query] = mediaItems
+                        android.util.Log.d("PlaybackService", "onSearch found ${mediaItems.size} items for '$query'")
+                        session.notifySearchResultChanged(browser, query, mediaItems.size, params)
+                    } else {
+                        searchResultsCache[query] = emptyList()
+                        session.notifySearchResultChanged(browser, query, 0, params)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("PlaybackService", "Error in onSearch", e)
+                    searchResultsCache[query] = emptyList()
+                    session.notifySearchResultChanged(browser, query, 0, params)
+                }
+                LibraryResult.ofVoid()
+            }
+        }
+
+        override fun onGetSearchResult(
+            session: MediaLibrarySession,
+            browser: MediaSession.ControllerInfo,
+            query: String,
+            page: Int,
+            pageSize: Int,
+            params: LibraryParams?
+        ): ListenableFuture<LibraryResult<com.google.common.collect.ImmutableList<MediaItem>>> {
+            android.util.Log.d("PlaybackService", "onGetSearchResult query='$query' page=$page pageSize=$pageSize")
+            val items = searchResultsCache[query] ?: emptyList()
+            val fromIndex = page * pageSize
+            val toIndex = minOf(fromIndex + pageSize, items.size)
+            
+            val list = if (fromIndex < items.size) {
+                items.subList(fromIndex, toIndex)
+            } else {
+                emptyList()
+            }
+            
+            val immutableList = com.google.common.collect.ImmutableList.copyOf(list)
+            return Futures.immediateFuture(LibraryResult.ofItemList(immutableList, params))
+        }
+
         override fun onAddMediaItems(
             mediaSession: MediaSession,
             controller: MediaSession.ControllerInfo,
             mediaItems: MutableList<MediaItem>
         ): ListenableFuture<MutableList<MediaItem>> {
-            // Two paths:
-            //   1. searchQuery present  →  voice assistant: search server, return top results
-            //   2. mediaId encodes id|source → already a known song, rebuild URI
             return serviceScope.future {
                 val resolved = mutableListOf<MediaItem>()
                 for (item in mediaItems) {
-                    val query = item.requestMetadata.searchQuery?.toString()?.trim()
+                    val mediaId = item.mediaId
+                    val requestMetadata = item.requestMetadata
+                    val mediaMetadata = item.mediaMetadata
+
+                    // Log incoming item details
+                    android.util.Log.d("PlaybackService", "onAddMediaItems: mediaId='$mediaId'")
+                    android.util.Log.d("PlaybackService", "  requestMetadata: searchQuery='${requestMetadata.searchQuery}', mediaUri='${requestMetadata.mediaUri}'")
+                    requestMetadata.extras?.let { extras ->
+                        for (key in extras.keySet()) {
+                            android.util.Log.d("PlaybackService", "    reqExtra: $key -> ${extras.get(key)}")
+                        }
+                    }
+                    android.util.Log.d("PlaybackService", "  mediaMetadata: title='${mediaMetadata.title}', artist='${mediaMetadata.artist}', album='${mediaMetadata.albumTitle}'")
+                    mediaMetadata.extras?.let { extras ->
+                        for (key in extras.keySet()) {
+                            android.util.Log.d("PlaybackService", "    metaExtra: $key -> ${extras.get(key)}")
+                        }
+                    }
+
+                    // Extract search query
+                    var query = requestMetadata.searchQuery?.toString()?.trim()
+                    if (query.isNullOrEmpty()) {
+                        // Fallback: check extras
+                        val queryKeys = arrayOf(
+                            "EXTRA_KEYWORDS_SEARCH", "keywords", "query", "keyword", "search_word", 
+                            "searchKey", "EXTRA_SEARCH_KEY", "search_key", "key", "text", "search_text", 
+                            "EXTRA_SEARCH_WORD", "voice_query", "name", "songName", "song_name", "title", "audio_name"
+                        )
+                        val artistKeys = arrayOf(
+                            "EXTRA_ARTIST_SEARCH", "artist", "artist_name", "artistName", "singer", "singer_name"
+                        )
+                        
+                        fun extractFromBundle(extras: android.os.Bundle): String? {
+                            for (key in queryKeys) {
+                                val v = extras.getString(key) ?: extras.get(key)?.toString()
+                                if (!v.isNullOrBlank()) {
+                                    var artistVal: String? = null
+                                    for (aKey in artistKeys) {
+                                        val a = extras.getString(aKey) ?: extras.get(aKey)?.toString()
+                                        if (!a.isNullOrBlank()) {
+                                            artistVal = a.trim()
+                                            break
+                                        }
+                                    }
+                                    return if (!artistVal.isNullOrBlank()) "${v.trim()} $artistVal" else v.trim()
+                                }
+                            }
+                            return null
+                        }
+                        
+                        requestMetadata.extras?.let { extras ->
+                            query = extractFromBundle(extras)
+                        }
+                        if (query.isNullOrEmpty()) {
+                            mediaMetadata.extras?.let { extras ->
+                                query = extractFromBundle(extras)
+                            }
+                        }
+                    }
+
+                    // If mediaId seems to be a text query (contains letters or Chinese characters and is not system ID)
+                    if (query.isNullOrEmpty() && mediaId.isNotBlank() &&
+                        !mediaId.contains("\u0001") &&
+                        !mediaId.startsWith("[") &&
+                        !mediaId.startsWith("androidx.media3.") &&
+                        !mediaId.equals("ROOT", ignoreCase = true) &&
+                        !mediaId.all { it.isDigit() }) {
+                        query = mediaId.trim()
+                    }
+
                     if (!query.isNullOrEmpty()) {
-                        repo.search(query).getOrNull()?.songsSafe?.take(20)?.forEach { song ->
-                            resolved.add(song.toMediaItem())
+                        android.util.Log.d("PlaybackService", "onAddMediaItems: query extracted='$query', performing search...")
+                        val searchResult = repo.search(query!!).getOrNull()
+                        val songs = searchResult?.songsSafe
+                        if (!songs.isNullOrEmpty()) {
+                            android.util.Log.d("PlaybackService", "onAddMediaItems: search found ${songs.size} songs for '$query', playing first: ${songs[0].name}")
+                            songs.take(20).forEach { song ->
+                                resolved.add(song.toMediaItem())
+                            }
+                        } else {
+                            android.util.Log.d("PlaybackService", "onAddMediaItems: search returned no results for '$query'")
                         }
                     } else {
-                        val parts = parseMediaId(item.mediaId)
+                        val parts = parseMediaId(mediaId)
                         if (parts != null) {
-                            // Caller does not know the streaming URL — patch it in.
+                            android.util.Log.d("PlaybackService", "onAddMediaItems: parts found id=${parts.first}, source=${parts.second}")
                             resolved.add(
                                 item.buildUpon()
                                     .setUri(streamUrlFor(parts.first, parts.second, item))
                                     .build()
                             )
+                        } else if (mediaId.isNotBlank() &&
+                                   !mediaId.contains("\u0001") &&
+                                   !mediaId.startsWith("[") &&
+                                   !mediaId.startsWith("androidx.media3.") &&
+                                   !mediaId.equals("ROOT", ignoreCase = true)) {
+                            // Treat as raw NetEase ID
+                            val rawId = mediaId.trim()
+                            android.util.Log.d("PlaybackService", "onAddMediaItems: Detected raw NetEase ID: '$rawId'")
+
+                            val title = mediaMetadata.title?.toString()?.takeIf { it.isNotBlank() } ?: "语音播放歌曲"
+                            val artist = mediaMetadata.artist?.toString()?.takeIf { it.isNotBlank() } ?: "未知歌手"
+                            val album = mediaMetadata.albumTitle?.toString()?.takeIf { it.isNotBlank() } ?: ""
+                            val cover = mediaMetadata.artworkUri
+
+                            val resolvedMetadata = mediaMetadata.buildUpon()
+                                .setTitle(title)
+                                .setArtist(artist)
+                                .setAlbumTitle(album)
+                                .setArtworkUri(cover)
+                                .setIsPlayable(true)
+                                .setIsBrowsable(false)
+                                .build()
+
+                            val resolvedItemTemp = item.buildUpon()
+                                .setMediaId(buildMediaId(rawId, "netease"))
+                                .setMediaMetadata(resolvedMetadata)
+                                .build()
+
+                            val finalUri = streamUrlFor(rawId, "netease", resolvedItemTemp)
+
+                            val resolvedItem = resolvedItemTemp.buildUpon()
+                                .setUri(finalUri)
+                                .build()
+
+                            resolved.add(resolvedItem)
                         } else if (item.localConfiguration?.uri != null) {
+                            android.util.Log.d("PlaybackService", "onAddMediaItems: uri already present, adding directly")
                             resolved.add(item)
+                        } else {
+                            android.util.Log.d("PlaybackService", "onAddMediaItems: unhandled item, skipping")
                         }
                     }
                 }
+                android.util.Log.d("PlaybackService", "onAddMediaItems: returning resolved size=${resolved.size}")
                 resolved
             }
         }
@@ -201,4 +454,6 @@ class PlaybackService : MediaLibraryService() {
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         return PendingIntent.getActivity(this, 0, intent, flags)
     }
+
+
 }

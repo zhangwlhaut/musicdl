@@ -154,6 +154,8 @@ class PlaybackController(context: Context) {
         controller = null
     }
 
+    fun isConnected(): Boolean = PlaybackService.player != null || controller != null
+
     /**
      * 应用启动时调用:若队列为空,自动拉取最近播放并起播,实现"打开即续播"。
      * - 进程被杀重新打开时,PlaybackService 也已重启,player.mediaItemCount == 0
