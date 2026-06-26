@@ -1006,6 +1006,28 @@ function handlePaginationShortcut(event) {
     goToPage(nextPage);
 }
 
+function togglePlayback() {
+    if (typeof ap === 'undefined' || !ap || !ap.audio) return;
+    if (!ap.list || !Array.isArray(ap.list.audios) || ap.list.audios.length === 0) return;
+    if (ap.audio.paused) {
+        ap.play();
+    } else {
+        ap.pause();
+    }
+}
+
+function handlePlaybackShortcut(event) {
+    if (event.defaultPrevented || event.isComposing) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.code !== 'Space' && event.key !== ' ' && event.key !== 'Spacebar') return;
+    if (isEditableElement(event.target) || isEditableElement(document.activeElement)) return;
+    if (hasVisibleModalOverlay()) return;
+    if (typeof ap === 'undefined' || !ap || !ap.list || !ap.list.audios || ap.list.audios.length === 0) return;
+
+    event.preventDefault();
+    togglePlayback();
+}
+
 function bindPageNavigationEvents() {
     if (pageNavigationEventsBound) return;
     pageNavigationEventsBound = true;
@@ -1026,6 +1048,7 @@ function bindPageNavigationEvents() {
     }, true);
 
     document.addEventListener('keydown', handlePaginationShortcut);
+    document.addEventListener('keydown', handlePlaybackShortcut);
 
     window.addEventListener('popstate', function() {
         navigateTo(window.location.href, {
@@ -3035,7 +3058,43 @@ function setupMediaSession() {
         seekCurrentTrack(details.seekTime);
     });
 
+    bindMediaKeyFallback();
     syncMediaSession();
+}
+
+let mediaKeysBound = false;
+
+// bindMediaKeyFallback 监听 WebView 经 DOM 下发的媒体键（部分车机/头机会把方向盘
+// 媒体键作为 KeyboardEvent 送进网页），作为系统 MediaSession 之外的兜底切歌途径。
+function bindMediaKeyFallback() {
+    if (mediaKeysBound) return;
+    mediaKeysBound = true;
+
+    document.addEventListener('keydown', function(event) {
+        if (event.defaultPrevented || event.isComposing) return;
+        if (typeof ap === 'undefined' || !ap || !ap.list || !ap.list.audios || ap.list.audios.length === 0) return;
+
+        switch (event.key) {
+        case 'MediaTrackNext':
+            event.preventDefault();
+            switchTrackByOffset(1);
+            break;
+        case 'MediaTrackPrevious':
+            event.preventDefault();
+            switchTrackByOffset(-1);
+            break;
+        case 'MediaPlayPause':
+            event.preventDefault();
+            togglePlayback();
+            break;
+        case 'MediaStop':
+            event.preventDefault();
+            if (ap.audio) ap.pause();
+            break;
+        default:
+            break;
+        }
+    });
 }
 
 const KaraokeLyrics = (() => {
