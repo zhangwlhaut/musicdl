@@ -56,6 +56,7 @@ class PlaybackService : MediaLibraryService() {
 
     private lateinit var session: MediaLibrarySession
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wakeLockTimer: java.util.Timer? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -63,6 +64,19 @@ class PlaybackService : MediaLibraryService() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "MusicDL:PlaybackWakeLock").apply {
             setReferenceCounted(false)
+        }
+
+        /**
+         * 定期续期 WakeLock，确保息屏后 CPU 持续运行:
+         * - PARTIAL_WAKE_LOCK 默认不超时，但某些厂商 ROM（如 MIUI）会限制长时 WakeLock
+         * - 每 10 分钟重新 acquire（带 30 分钟超时），相当于 "滚动续约"
+         */
+        wakeLockTimer = java.util.Timer("WakeLockRenewal", false).apply {
+            schedule(object : java.util.TimerTask() {
+                override fun run() {
+                    holdWakeLock()
+                }
+            }, 5 * 60 * 1000L, 10 * 60 * 1000L) // 首次 5 分钟后，之后每 10 分钟续一次
         }
 
         val baseDataSourceFactory = DefaultDataSource.Factory(
@@ -123,19 +137,36 @@ class PlaybackService : MediaLibraryService() {
         super.onUpdateNotification(session, forceForeground)
 
         if (forceForeground) {
-            try {
-                wakeLock?.acquire(30 * 60 * 1000L) // 30 mins safe timeout
-            } catch (e: Exception) {
-                android.util.Log.e("PlaybackService", "Failed to acquire wake lock", e)
-            }
+            holdWakeLock()
         } else {
-            try {
-                if (wakeLock?.isHeld == true) {
-                    wakeLock?.release()
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("PlaybackService", "Failed to release wake lock", e)
+            releaseWakeLock()
+        }
+    }
+
+    /** 持锁：每次 acquire 带 30 分钟超时，配合定时器实现滚动续约 */
+    private fun holdWakeLock() {
+        try {
+            if (wakeLock?.isHeld != true) {
+                wakeLock?.acquire(30 * 60 * 1000L)
+                android.util.Log.d("PlaybackService", "WakeLock acquired (30min)")
+            } else {
+                // 已经持有就续约——重新 acquire 刷新超时
+                wakeLock?.acquire(30 * 60 * 1000L)
+                android.util.Log.d("PlaybackService", "WakeLock renewed (30min)")
             }
+        } catch (e: Exception) {
+            android.util.Log.e("PlaybackService", "Failed to acquire/renew wake lock", e)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+                android.util.Log.d("PlaybackService", "WakeLock released")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PlaybackService", "Failed to release wake lock", e)
         }
     }
 
@@ -148,13 +179,13 @@ class PlaybackService : MediaLibraryService() {
     }
 
     override fun onDestroy() {
+        // 取消 WakeLock 续期定时器
         try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
-        } catch (e: Exception) {
-            // ignore
-        }
+            wakeLockTimer?.cancel()
+            wakeLockTimer = null
+        } catch (e: Exception) { /* ignore */ }
+
+        releaseWakeLock()
         wakeLock = null
         session.release()
         player?.release()
