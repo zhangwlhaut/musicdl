@@ -50,6 +50,31 @@ func TestAppJSMediaSessionArtworkUsesCoverProxy(t *testing.T) {
 	}
 }
 
+func TestAppJSPlaybackShortcutAndMediaKeys(t *testing.T) {
+	content, err := templateFS.ReadFile("templates/static/js/app.js")
+	if err != nil {
+		t.Fatalf("ReadFile(app.js): %v", err)
+	}
+
+	js := string(content)
+	required := []string{
+		"function togglePlayback()",
+		"function handlePlaybackShortcut(event)",
+		"document.addEventListener('keydown', handlePlaybackShortcut);",
+		"function bindMediaKeyFallback()",
+		"bindMediaKeyFallback();",
+		"'MediaTrackNext'",
+		"'MediaTrackPrevious'",
+		"'MediaPlayPause'",
+		"'MediaStop'",
+	}
+	for _, token := range required {
+		if !strings.Contains(js, token) {
+			t.Fatalf("app.js missing %q", token)
+		}
+	}
+}
+
 func TestCoverProxyReturnsInlineImage(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 

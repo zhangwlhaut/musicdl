@@ -456,9 +456,6 @@ function buildLyricRequestURL(song, endpoint = 'lyric', format = 'auto') {
     if (extraValue && extraValue !== '{}' && extraValue !== 'null') {
         params.set('extra', extraValue);
     }
-    if (endpoint === 'download_lrc') {
-        params.set('save_local', '1');
-    }
 
     return `${API_ROOT}/${endpoint}?${params.toString()}`;
 }
@@ -514,14 +511,12 @@ function buildCoverDownloadURL(song) {
         params.set('download', '1');
         params.set('name', String(song?.name || ''));
         params.set('artist', String(song?.artist || ''));
-        params.set('save_local', '1');
         return `${API_ROOT}/local_music/cover?${params.toString()}`;
     }
 
     params.set('url', String(song?.cover || 'https://via.placeholder.com/600?text=No+Cover'));
     params.set('name', String(song?.name || ''));
     params.set('artist', String(song?.artist || ''));
-    params.set('save_local', '1');
     return `${API_ROOT}/download_cover?${params.toString()}`;
 }
 
@@ -1039,12 +1034,34 @@ function handlePaginationShortcut(event) {
     goToPage(nextPage);
 }
 
+function togglePlayback() {
+    if (typeof ap === 'undefined' || !ap || !ap.audio) return;
+    if (!ap.list || !Array.isArray(ap.list.audios) || ap.list.audios.length === 0) return;
+    if (ap.audio.paused) {
+        ap.play();
+    } else {
+        ap.pause();
+    }
+}
+
+function handlePlaybackShortcut(event) {
+    if (event.defaultPrevented || event.isComposing) return;
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.code !== 'Space' && event.key !== ' ' && event.key !== 'Spacebar') return;
+    if (isEditableElement(event.target) || isEditableElement(document.activeElement)) return;
+    if (hasVisibleModalOverlay()) return;
+    if (typeof ap === 'undefined' || !ap || !ap.list || !ap.list.audios || ap.list.audios.length === 0) return;
+
+    event.preventDefault();
+    togglePlayback();
+}
+
 function bindPageNavigationEvents() {
     if (pageNavigationEventsBound) return;
     pageNavigationEventsBound = true;
 
     document.addEventListener('click', async function(event) {
-        const link = event.target.closest('.btn-download, .btn-lyric, .btn-cover');
+        const link = event.target.closest('.btn-download');
         if (!link) return;
         event.preventDefault();
         await handleDownloadClick(link);
@@ -1059,6 +1076,7 @@ function bindPageNavigationEvents() {
     }, true);
 
     document.addEventListener('keydown', handlePaginationShortcut);
+    document.addEventListener('keydown', handlePlaybackShortcut);
 
     window.addEventListener('popstate', function() {
         navigateTo(window.location.href, {
@@ -3068,7 +3086,43 @@ function setupMediaSession() {
         seekCurrentTrack(details.seekTime);
     });
 
+    bindMediaKeyFallback();
     syncMediaSession();
+}
+
+let mediaKeysBound = false;
+
+// bindMediaKeyFallback 监听 WebView 经 DOM 下发的媒体键（部分车机/头机会把方向盘
+// 媒体键作为 KeyboardEvent 送进网页），作为系统 MediaSession 之外的兜底切歌途径。
+function bindMediaKeyFallback() {
+    if (mediaKeysBound) return;
+    mediaKeysBound = true;
+
+    document.addEventListener('keydown', function(event) {
+        if (event.defaultPrevented || event.isComposing) return;
+        if (typeof ap === 'undefined' || !ap || !ap.list || !ap.list.audios || ap.list.audios.length === 0) return;
+
+        switch (event.key) {
+        case 'MediaTrackNext':
+            event.preventDefault();
+            switchTrackByOffset(1);
+            break;
+        case 'MediaTrackPrevious':
+            event.preventDefault();
+            switchTrackByOffset(-1);
+            break;
+        case 'MediaPlayPause':
+            event.preventDefault();
+            togglePlayback();
+            break;
+        case 'MediaStop':
+            event.preventDefault();
+            if (ap.audio) ap.pause();
+            break;
+        default:
+            break;
+        }
+    });
 }
 
 const KaraokeLyrics = (() => {
@@ -4160,12 +4214,14 @@ function updateBatchToolbar() {
     const batchSwitch = document.getElementById('btn-batch-switch');
     const batchDl = document.getElementById('btn-batch-dl');
     const batchDeleteLocal = document.getElementById('btn-batch-delete-local');
+    const batchFavLocal = document.getElementById('btn-batch-fav-local');
+    const batchFav = document.getElementById('btn-batch-fav');
     const batchRemoveCollection = document.getElementById('btn-batch-remove-collection');
-    
+
     if(document.getElementById('selected-count')) {
         document.getElementById('selected-count').textContent = count;
     }
-    
+
     const allBoxes = document.querySelectorAll('.song-checkbox');
     if (allBoxes.length > 0 && selectAllCb) {
         selectAllCb.checked = (allBoxes.length === count);
@@ -4179,11 +4235,15 @@ function updateBatchToolbar() {
         if(batchSwitch) batchSwitch.disabled = nonLocalCount === 0;
         if(batchDl) batchDl.disabled = nonLocalCount === 0;
         if(batchDeleteLocal) batchDeleteLocal.disabled = localCount === 0;
+        if(batchFavLocal) batchFavLocal.disabled = localCount === 0;
+        if(batchFav) batchFav.disabled = false;
         if(batchRemoveCollection) batchRemoveCollection.disabled = false;
     } else {
         if(batchSwitch) batchSwitch.disabled = true;
         if(batchDl) batchDl.disabled = true;
         if(batchDeleteLocal) batchDeleteLocal.disabled = true;
+        if(batchFavLocal) batchFavLocal.disabled = true;
+        if(batchFav) batchFav.disabled = true;
         if(batchRemoveCollection) batchRemoveCollection.disabled = true;
     }
     
@@ -4829,6 +4889,94 @@ function playAllSongs() {
     }
 }
 
+let pendingBatchFavIds = [];
+let pendingBatchFavSongs = [];
+
+function batchAddToCollection() {
+    const songs = getSelectedSongs();
+    if (songs.length === 0) {
+        alert('请先选择歌曲');
+        return;
+    }
+    pendingBatchFavSongs = songs.map(song => ({
+        id: song.id,
+        source: song.source,
+        name: song.name,
+        artist: song.artist,
+        cover: song.cover,
+        duration: song.duration,
+        extra: song.extra
+    })).filter(song => song.id && song.source);
+    pendingBatchFavIds = [];
+    pendingFavSong = null;
+    document.getElementById('addToCollectionModal').style.display = 'flex';
+    refreshAddToCollectionList();
+}
+
+async function submitBatchAddToCollection(colId) {
+    const songs = pendingBatchFavSongs.slice();
+    pendingBatchFavSongs = [];
+    if (!colId || songs.length === 0) return;
+
+    try {
+        const response = await fetch(`${API_ROOT}/collections/${colId}/songs/batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ songs })
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || payload.error) {
+            throw new Error((payload && payload.error) || '批量收藏失败');
+        }
+        document.getElementById('addToCollectionModal').style.display = 'none';
+        let message = `批量收藏完成：新增 ${payload.added || 0}`;
+        if (payload.duplicate) message += `，已存在 ${payload.duplicate}`;
+        if (payload.failed) message += `，失败 ${payload.failed}`;
+        alert(message);
+    } catch (error) {
+        alert(error.message || '批量收藏失败');
+    }
+}
+
+function batchAddLocalMusicToCollection() {
+    const songs = getSelectedSongs().filter(song => isLocalMusicSourceValue(song.source));
+    if (songs.length === 0) {
+        alert('请先选择本地音乐');
+        return;
+    }
+    pendingBatchFavIds = songs.map(song => song.id).filter(Boolean);
+    pendingBatchFavSongs = [];
+    pendingFavSong = null;
+    document.getElementById('addToCollectionModal').style.display = 'flex';
+    refreshAddToCollectionList();
+}
+
+async function submitBatchAddLocalMusicToCollection(colId) {
+    const ids = pendingBatchFavIds.slice();
+    pendingBatchFavIds = [];
+    if (!colId || ids.length === 0) return;
+
+    try {
+        const response = await fetch(`${API_ROOT}/collections/${colId}/local_music/batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids })
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || payload.error) {
+            throw new Error((payload && payload.error) || '批量收藏失败');
+        }
+        document.getElementById('addToCollectionModal').style.display = 'none';
+        let message = `批量收藏完成：新增 ${payload.added || 0}`;
+        if (payload.duplicate) message += `，已存在 ${payload.duplicate}`;
+        if (payload.failed) message += `，失败 ${payload.failed}`;
+        alert(message);
+        await refreshCurrentPageContent({ scroll: false });
+    } catch (error) {
+        alert(error.message || '批量收藏失败');
+    }
+}
+
 function openCollectionManager() {
     navigateTo(API_ROOT + '/my_collections');
 }
@@ -5001,7 +5149,15 @@ function refreshAddToCollectionList() {
                     </div>
                 `;
                 
-                item.querySelector('.col-clickable-area').onclick = () => addSongToCollection(col.id);
+                item.querySelector('.col-clickable-area').onclick = () => {
+                    if (pendingBatchFavIds && pendingBatchFavIds.length > 0) {
+                        submitBatchAddLocalMusicToCollection(col.id);
+                    } else if (pendingBatchFavSongs && pendingBatchFavSongs.length > 0) {
+                        submitBatchAddToCollection(col.id);
+                    } else {
+                        addSongToCollection(col.id);
+                    }
+                };
                 item.querySelector('.btn-edit').onclick = (e) => {
                     e.stopPropagation();
                     showEditCollectionModal(col.id, col.name, col.description || '', col.cover || '');
@@ -5045,7 +5201,9 @@ function openAddToCollectionModal(btn) {
         cover: coverUrl,
         extra: extra
     };
-    
+    pendingBatchFavIds = [];
+    pendingBatchFavSongs = [];
+
     document.getElementById('addToCollectionModal').style.display = 'flex';
     refreshAddToCollectionList();
 }

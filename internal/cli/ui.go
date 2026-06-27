@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -580,6 +581,11 @@ type modelState struct {
 	err       error
 	statusMsg string // 底部状态栏消息
 
+	// 试听播放 (ffplay)
+	playCmd      *exec.Cmd // 当前 ffplay 进程
+	playingName  string    // 正在播放的歌名，用于状态栏
+	playTempFile string    // soda 等临时文件，停止时删除
+
 	windowWidth  int
 	windowHeight int
 	pageSize     int
@@ -648,6 +654,7 @@ func (m modelState) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if msg.String() == "ctrl+c" {
+			m.stopPlayback()
 			return m, tea.Quit
 		}
 
@@ -860,12 +867,31 @@ func (m modelState) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = fmt.Sprintf("已选中全部 %d 首歌曲", len(m.songs))
 			}
 		case "q":
+			m.stopPlayback()
 			return m, tea.Quit
 		case "esc", "b":
+			m.stopPlayback()
 			m.state = stateInput
 			m.textInput.SetValue("")
 			m.textInput.Focus()
 			return m, textinput.Blink
+		case "p":
+			if len(m.songs) == 0 || m.cursor < 0 || m.cursor >= len(m.songs) {
+				return m, nil
+			}
+			m.stopPlayback()
+			if err := m.startPlayback(m.songs[m.cursor]); err != nil {
+				m.statusMsg = fmt.Sprintf("播放失败: %v", err)
+			} else {
+				m.statusMsg = fmt.Sprintf("▶ 正在播放: %s", m.playingName)
+			}
+			return m, nil
+		case "s":
+			if m.playCmd != nil {
+				m.stopPlayback()
+				m.statusMsg = "⏹ 已停止播放"
+			}
+			return m, nil
 		case "enter":
 			if len(m.selected) == 0 {
 				m.selected[m.cursor] = struct{}{}
@@ -1325,6 +1351,46 @@ func switchSourceCmd(index int, song model.Song) tea.Cmd {
 	}
 }
 
+// stopPlayback 停止当前 ffplay 进程并清理临时文件。
+func (m *modelState) stopPlayback() {
+	if m.playCmd != nil && m.playCmd.Process != nil {
+		_ = m.playCmd.Process.Kill()
+		_ = m.playCmd.Wait()
+	}
+	m.playCmd = nil
+	if m.playTempFile != "" {
+		_ = os.Remove(m.playTempFile)
+		m.playTempFile = ""
+	}
+	m.playingName = ""
+}
+
+// startPlayback 启动 ffplay 试听指定歌曲。
+func (m *modelState) startPlayback(song model.Song) error {
+	ffplayPath, err := core.ResolveFFplayPath()
+	if err != nil || ffplayPath == "" {
+		return fmt.Errorf("未找到 ffplay，请确认已安装 ffmpeg 并在 PATH 中")
+	}
+
+	playURL, tempFile, err := core.PreparePlaybackSource(&song)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command(ffplayPath, core.PlaybackArgs(&song, playURL)...)
+	if err := cmd.Start(); err != nil {
+		if tempFile != "" {
+			_ = os.Remove(tempFile)
+		}
+		return err
+	}
+
+	m.playCmd = cmd
+	m.playTempFile = tempFile
+	m.playingName = song.Display()
+	return nil
+}
+
 // 内部下载实现（支持 ID3 元数据内嵌）
 func downloadSongWithCookie(song *model.Song, outDir string, withCover bool, withLyrics bool) error {
 	result, err := core.SaveSongToFile(song, outDir, withCover, withLyrics)
@@ -1745,10 +1811,11 @@ func (m modelState) View() string {
 		s.WriteString("\n(按 Enter 搜索/解析, Tab 切换搜歌/歌单, w 每日推荐, Ctrl+C 退出)")
 		cookies := cm.GetAll()
 		if len(cookies) > 0 {
-			var loadedSources []string
+			loadedSources := make([]string, 0, len(cookies))
 			for k := range cookies {
 				loadedSources = append(loadedSources, k)
 			}
+			sort.Strings(loadedSources)
 			cookieHint := fmt.Sprintf("\n(已加载 Cookie: %s)", strings.Join(loadedSources, ", "))
 			s.WriteString(lipgloss.NewStyle().Foreground(greenColor).Render(cookieHint))
 		}
@@ -1763,7 +1830,7 @@ func (m modelState) View() string {
 		statusStyle := lipgloss.NewStyle().Foreground(subtleColor)
 		s.WriteString(statusStyle.Render(m.statusMsg))
 		s.WriteString("\n\n")
-		s.WriteString(statusStyle.Render("↑/↓: 移动 • PgUp/PgDn: 翻页 • 空格: 选择 • a: 全选/清空 • r: 换源 • Enter: 下载 • b: 返回 • q: 退出"))
+		s.WriteString(statusStyle.Render("↑/↓: 移动 • PgUp/PgDn: 翻页 • 空格: 选择 • a: 全选/清空 • p: 播放 • s: 停止 • r: 换源 • Enter: 下载 • b: 返回 • q: 退出"))
 	case statePlaylistResult: // 新增
 		s.WriteString(m.renderCollectionTable())
 		s.WriteString("\n")
@@ -1798,10 +1865,11 @@ func (m modelState) renderInputView() string {
 
 	cookies := cm.GetAll()
 	if len(cookies) > 0 {
-		var loadedSources []string
+		loadedSources := make([]string, 0, len(cookies))
 		for k := range cookies {
 			loadedSources = append(loadedSources, k)
 		}
+		sort.Strings(loadedSources)
 		cookieHint := fmt.Sprintf("\n(已加载 Cookie: %s)", strings.Join(loadedSources, ", "))
 		s.WriteString(lipgloss.NewStyle().Foreground(greenColor).Render(cookieHint))
 	}

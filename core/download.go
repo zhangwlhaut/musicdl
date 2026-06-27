@@ -226,21 +226,26 @@ func sanitizeDownloadPathSegment(value string) string {
 	return strings.Trim(utils.SanitizeFilename(value), " .")
 }
 
+// FetchDecryptedSodaAudio 下载并解密 soda（汽水）加密音频流，返回明文音频字节。
+func FetchDecryptedSodaAudio(song *model.Song) ([]byte, error) {
+	cookie := CM.Get("soda")
+	sodaInst := soda.New(cookie)
+	info, err := sodaInst.GetDownloadInfo(song)
+	if err != nil {
+		return nil, err
+	}
+
+	encryptedData, _, err := FetchBytesWithMime(info.URL, "soda")
+	if err != nil {
+		return nil, err
+	}
+
+	return soda.DecryptAudio(encryptedData, info.PlayAuth)
+}
+
 func fetchSongAudio(song *model.Song) ([]byte, string, error) {
 	if song.Source == "soda" {
-		cookie := CM.Get("soda")
-		sodaInst := soda.New(cookie)
-		info, err := sodaInst.GetDownloadInfo(song)
-		if err != nil {
-			return nil, "", err
-		}
-
-		encryptedData, _, err := FetchBytesWithMime(info.URL, "soda")
-		if err != nil {
-			return nil, "", err
-		}
-
-		finalData, err := soda.DecryptAudio(encryptedData, info.PlayAuth)
+		finalData, err := FetchDecryptedSodaAudio(song)
 		if err != nil {
 			return nil, "", err
 		}

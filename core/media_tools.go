@@ -11,6 +11,7 @@ import (
 const (
 	ffmpegEnvName  = "MUSIC_DL_FFMPEG"
 	ffprobeEnvName = "MUSIC_DL_FFPROBE"
+	ffplayEnvName  = "MUSIC_DL_FFPLAY"
 )
 
 func ResolveFFmpegPath() (string, error) {
