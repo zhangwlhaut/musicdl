@@ -46,6 +46,12 @@ class PlaybackController(context: Context) {
     /** 每个歌曲已尝试过自动切源的音源集合 (songKey -> Set of sources) */
     private val switchedSourcesPerSong = mutableMapOf<String, MutableSet<String>>()
 
+    /** 当前正在播放的完整歌单(用于预解析后续歌曲) */
+    private var currentPlaylist: List<Song> = emptyList()
+
+    /** 预解析 Job，切换歌单时取消旧的 */
+    private var preloadJob: kotlinx.coroutines.Job? = null
+
     private val songListAdapter by lazy {
         com.musicdl.car.data.ApiClient.moshi.adapter<List<Song>>(
             com.squareup.moshi.Types.newParameterizedType(List::class.java, Song::class.java)
@@ -238,16 +244,21 @@ class PlaybackController(context: Context) {
     fun playNow(songs: List<Song>, startIndex: Int = 0) {
         consecutiveFailureCount = 0
         switchedSourcesPerSong.clear()
+        StreamUrlCache.clear()
         if (songs.isEmpty()) {
             Toaster.show("没有可播放的歌曲")
             return
         }
+        // 保存歌单并启动预解析(提前确认后续歌曲的可用音源和 CDN 直链)
+        currentPlaylist = songs
         val p = PlaybackService.player
         if (p != null) {
             val safeStart = startIndex.coerceIn(0, songs.lastIndex)
             p.setMediaItems(songs.map { it.toMediaItem() }, safeStart, 0L)
             p.prepare()
             p.play()
+            // 起播后立即预解析后续歌曲的真实 CDN URL(亮屏时网络可用)
+            preResolveUpcomingUrls(songs, startIndex, p)
             return
         }
         val c = controller ?: run {
@@ -257,6 +268,89 @@ class PlaybackController(context: Context) {
         // controller 路径走 Binder IPC,单次 Parcel 超过 ~1MB 会抛
         // TransactionTooLargeException,因此必须分批塞。
         playNowChunkedViaController(c, songs, startIndex)
+    }
+
+    /**
+     * 预解析即将播放的歌曲的真实 CDN URL。
+     *
+     * 在亮屏/网络可用时,提前逐个调用后端解析歌曲的真实音频直链,写入
+     * [StreamUrlCache]。这样息屏后切歌时 [Song.toMediaItem] 可以直接
+     * 使用缓存的 CDN URL(ExoPlayer 直连 CDN),避免走 Go proxy 触发
+     * 新的外网 TCP 连接被 Xiaomi 息屏限制拦截。
+     *
+     * 如果主音源不可用(`/music/inspect 失败`),则自动调用
+     * `/music/switch_source` 寻找替代音源并缓存。
+     */
+    private fun preResolveUpcomingUrls(songs: List<Song>, startIndex: Int, exoPlayer: Player) {
+        preloadJob?.cancel()
+        preloadJob = scope.launch {
+            val start = (startIndex + 1).coerceAtMost(songs.lastIndex)
+            val end = (start + 10).coerceAtMost(songs.size) // 预解析后续 10 首
+            for (i in start until end) {
+                val song = songs[i]
+                val key = buildMediaId(song.id, song.source)
+                if (StreamUrlCache.getDirectUrl(song) != null) continue // 已缓存
+
+                // 1) 解析真实 CDN URL
+                val cdnUrl = withContext(Dispatchers.IO) { resolveCdnUrl(song) }
+                if (cdnUrl != null) {
+                    StreamUrlCache.putDirectUrl(song, cdnUrl)
+                    // 替换 ExoPlayer 队列中的 mediaItem 为直链版本
+                    replaceMediaItemCached(exoPlayer, i, song)
+                    continue
+                }
+
+                // 2) 主音源不可用 → 尝试自动换源
+                android.util.Log.d("PlaybackController", "preResolve: primary source failed for '${song.name}', trying switch_source")
+                val replacement = withContext(Dispatchers.IO) { repo.switchSource(song) }
+                if (replacement != null) {
+                    StreamUrlCache.recordSwitchResult(key, replacement)
+                    // 同时缓存替代歌的 CDN URL
+                    val altUrl = withContext(Dispatchers.IO) { resolveCdnUrl(replacement) }
+                    if (altUrl != null) {
+                        StreamUrlCache.putDirectUrl(replacement, altUrl)
+                    }
+                    replaceMediaItemCached(exoPlayer, i, replacement)
+                    android.util.Log.d("PlaybackController", "preResolve: switched '${song.name}' to source=${replacement.source}")
+                }
+            }
+        }
+    }
+
+    /** 向 Go Server 的 /music/inspect 查询真实 CDN URL */
+    private fun resolveCdnUrl(song: Song): String? {
+        return try {
+            val url = java.net.URL(
+                "http://127.0.0.1:37777/music/inspect" +
+                "?id=${java.net.URLEncoder.encode(song.id, "UTF-8")}" +
+                "&source=${java.net.URLEncoder.encode(song.source, "UTF-8")}" +
+                "&duration=${song.duration}"
+            )
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            val json = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            // 解析 JSON: {"url":"https://...","valid":true,...}
+            val obj = org.json.JSONObject(json)
+            if (obj.optBoolean("valid", false)) {
+                obj.optString("url", null)
+            } else null
+        } catch (e: Exception) {
+            android.util.Log.w("PlaybackController", "resolveCdnUrl failed for '${song.name}'", e)
+            null
+        }
+    }
+
+    /** 将 ExoPlayer 队列中指定位置的 mediaItem 替换为预解析后的版本 */
+    private fun replaceMediaItemCached(exoPlayer: Player, index: Int, song: Song) {
+        try {
+            if (index in 0 until exoPlayer.mediaItemCount) {
+                exoPlayer.replaceMediaItem(index, song.toMediaItem())
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("PlaybackController", "replaceMediaItemCached failed at $index", e)
+        }
     }
 
     /** 顺序播放整个列表(从头开始,关闭 shuffle)。 */
@@ -529,6 +623,17 @@ class PlaybackController(context: Context) {
         val failingIndex = p.currentMediaItemIndex
         scope.launch {
             android.util.Log.d("PlaybackController", "switchSource: requesting alternative for $origSong")
+
+            // 优先检查缓存：之前预解析过该歌曲的可用音源
+            val cachedSource = StreamUrlCache.getWorkingSource(origSong)
+            if (cachedSource != null && !triedSources.contains(cachedSource)) {
+                android.util.Log.d("PlaybackController", "switchSource: using cached working source=$cachedSource")
+                val cachedSong = origSong.copy(source = cachedSource)
+                applyReplacement(curPlayer = p, failingIndex = failingIndex,
+                    failingMediaId = failingMediaId, replacement = cachedSong)
+                return@launch
+            }
+
             val replacement = withContext(Dispatchers.IO) { repo.switchSource(origSong) }
             val curPlayer = player
             if (curPlayer == null) {
@@ -547,14 +652,32 @@ class PlaybackController(context: Context) {
                 android.util.Log.w("PlaybackController", "switchSource: index/mediaId changed, aborting replacement. index=$failingIndex, expected=$failingMediaId")
                 return@launch
             }
-            android.util.Log.d("PlaybackController", "switchSource: replacing item at $failingIndex with ${replacement.source} (${replacement.id})")
-            // 队列里把失败的歌替换成新源的歌,继续从同一位置播放。
-            curPlayer.replaceMediaItem(failingIndex, replacement.toMediaItem())
-            curPlayer.seekTo(failingIndex, 0L)
-            curPlayer.prepare()
-            curPlayer.play()
-            Toaster.show("已切换到「${replacement.source}」")
+            // 缓存切换结果，避免息屏后重复调用 switch_source
+            // 用 buildMediaId 格式保持一致,StreamUrlCache.keyOf 也使用同一格式
+            val originalIdKey = buildMediaId(parsed.first, failingSource)
+            StreamUrlCache.recordSwitchResult(originalIdKey, replacement)
+            applyReplacement(curPlayer, failingIndex, failingMediaId, replacement)
         }
+    }
+
+    /**
+     * 将 ExoPlayer 队列中失败位置的歌曲替换为替代音源并续播。
+     * 同时将替代歌的 CDN URL 缓存起来，避免息屏后切歌再次触发外网请求。
+     */
+    private fun applyReplacement(curPlayer: Player, failingIndex: Int, failingMediaId: String, replacement: Song) {
+        // 尝试缓存替代歌的 CDN 直链(后台异步,不阻塞播放)
+        scope.launch {
+            val cdnUrl = withContext(Dispatchers.IO) { resolveCdnUrl(replacement) }
+            if (cdnUrl != null) {
+                StreamUrlCache.putDirectUrl(replacement, cdnUrl)
+            }
+        }
+        android.util.Log.d("PlaybackController", "switchSource: replacing item at $failingIndex with ${replacement.source} (${replacement.id})")
+        curPlayer.replaceMediaItem(failingIndex, replacement.toMediaItem())
+        curPlayer.seekTo(failingIndex, 0L)
+        curPlayer.prepare()
+        curPlayer.play()
+        Toaster.show("已切换到「${replacement.source}」")
     }
 
     private fun refreshFromController() {

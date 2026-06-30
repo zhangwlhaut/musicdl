@@ -18,9 +18,11 @@ private const val MEDIA_ID_SEP = "\u0001"
 
 fun Song.toMediaItem(): MediaItem {
     val coverUri = ApiClient.coverUrl(this)?.toUri()
+    // 优先使用预解析的 CDN 直链,避免息屏后走 Go proxy 触发外网连接被拦截
+    val uri = StreamUrlCache.getDirectUrl(this) ?: ApiClient.streamUrl(this)
     return MediaItem.Builder()
         .setMediaId(buildMediaId(id, source))
-        .setUri(ApiClient.streamUrl(this))
+        .setUri(uri)
         .setMediaMetadata(
             MediaMetadata.Builder()
                 .setTitle(name)
