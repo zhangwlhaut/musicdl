@@ -8,6 +8,7 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.MoreExecutors
+import com.musicdl.car.data.ApiClient
 import com.musicdl.car.data.MusicRepository
 import com.musicdl.car.data.dto.Song
 import com.musicdl.car.ui.Toaster
@@ -220,6 +221,10 @@ class PlaybackController(context: Context) {
                 _shuffleEnabled.value = restored.shuffleEnabled
                 _repeatMode.value = restored.repeatMode
                 
+                // 起播后立即解析歌单剩余歌曲的 CDN 直链(亮屏时网络可用)
+                currentPlaylist = restored.songs
+                preResolveAllRemaining(restored.songs, safeStart, p)
+                
                 Toaster.show("已自动恢复播放")
                 return@launch
             }
@@ -257,8 +262,8 @@ class PlaybackController(context: Context) {
             p.setMediaItems(songs.map { it.toMediaItem() }, safeStart, 0L)
             p.prepare()
             p.play()
-            // 起播后立即预解析后续歌曲的真实 CDN URL(亮屏时网络可用)
-            preResolveUpcomingUrls(songs, startIndex, p)
+            // 起播后立即解析歌单剩余所有歌曲的 CDN 直链(亮屏时网络可用)
+            preResolveAllRemaining(songs, startIndex, p)
             return
         }
         val c = controller ?: run {
@@ -271,22 +276,21 @@ class PlaybackController(context: Context) {
     }
 
     /**
-     * 预解析即将播放的歌曲的真实 CDN URL。
+     * 后台逐首解析歌单剩余歌曲的 CDN 直链并缓存。
      *
-     * 在亮屏/网络可用时,提前逐个调用后端解析歌曲的真实音频直链,写入
-     * [StreamUrlCache]。这样息屏后切歌时 [Song.toMediaItem] 可以直接
-     * 使用缓存的 CDN URL(ExoPlayer 直连 CDN),避免走 Go proxy 触发
-     * 新的外网 TCP 连接被 Xiaomi 息屏限制拦截。
+     * 起播后立即启动，从 [startIndex] 的下一首开始逐个向后解析，直到歌单末尾。
+     * 解析到的 CDN 直链写入 [StreamUrlCache]，同时替换 ExoPlayer 队列中的
+     * MediaItem URI 为直链地址。
      *
-     * 如果主音源不可用(`/music/inspect 失败`),则自动调用
-     * `/music/switch_source` 寻找替代音源并缓存。
+     * 亮屏时网络可用，Go Server 能正常外出请求 CDN 信息；解析结果写入内存缓存后，
+     * 息屏时 ExoPlayer 直连 CDN 服务器播放，不再走 Go proxy，避免 Xiaomi 息屏
+     * 网络限制导致的中断。
      */
-    private fun preResolveUpcomingUrls(songs: List<Song>, startIndex: Int, exoPlayer: Player) {
+    private fun preResolveAllRemaining(songs: List<Song>, startIndex: Int, exoPlayer: Player) {
         preloadJob?.cancel()
         preloadJob = scope.launch {
             val start = (startIndex + 1).coerceAtMost(songs.lastIndex)
-            val end = (start + 10).coerceAtMost(songs.size) // 预解析后续 10 首
-            for (i in start until end) {
+            for (i in start until songs.size) {
                 val song = songs[i]
                 val key = buildMediaId(song.id, song.source)
                 if (StreamUrlCache.getDirectUrl(song) != null) continue // 已缓存
@@ -295,52 +299,32 @@ class PlaybackController(context: Context) {
                 val cdnUrl = withContext(Dispatchers.IO) { resolveCdnUrl(song) }
                 if (cdnUrl != null) {
                     StreamUrlCache.putDirectUrl(song, cdnUrl)
-                    // 替换 ExoPlayer 队列中的 mediaItem 为直链版本
                     replaceMediaItemCached(exoPlayer, i, song)
                     continue
                 }
 
                 // 2) 主音源不可用 → 尝试自动换源
-                android.util.Log.d("PlaybackController", "preResolve: primary source failed for '${song.name}', trying switch_source")
+                android.util.Log.d("PlaybackController",
+                    "preResolveAll: primary source failed for '${song.name}', trying switch_source")
                 val replacement = withContext(Dispatchers.IO) { repo.switchSource(song) }
                 if (replacement != null) {
                     StreamUrlCache.recordSwitchResult(key, replacement)
-                    // 同时缓存替代歌的 CDN URL
                     val altUrl = withContext(Dispatchers.IO) { resolveCdnUrl(replacement) }
                     if (altUrl != null) {
                         StreamUrlCache.putDirectUrl(replacement, altUrl)
                     }
                     replaceMediaItemCached(exoPlayer, i, replacement)
-                    android.util.Log.d("PlaybackController", "preResolve: switched '${song.name}' to source=${replacement.source}")
+                    android.util.Log.d("PlaybackController",
+                        "preResolveAll: switched '${song.name}' to source=${replacement.source}")
                 }
             }
+            android.util.Log.d("PlaybackController",
+                "preResolveAll: finished resolving ${songs.size - start} songs")
         }
     }
 
-    /** 向 Go Server 的 /music/inspect 查询真实 CDN URL */
-    private fun resolveCdnUrl(song: Song): String? {
-        return try {
-            val url = java.net.URL(
-                "http://127.0.0.1:37777/music/inspect" +
-                "?id=${java.net.URLEncoder.encode(song.id, "UTF-8")}" +
-                "&source=${java.net.URLEncoder.encode(song.source, "UTF-8")}" +
-                "&duration=${song.duration}"
-            )
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-            val json = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
-            // 解析 JSON: {"url":"https://...","valid":true,...}
-            val obj = org.json.JSONObject(json)
-            if (obj.optBoolean("valid", false)) {
-                obj.optString("url", null)
-            } else null
-        } catch (e: Exception) {
-            android.util.Log.w("PlaybackController", "resolveCdnUrl failed for '${song.name}'", e)
-            null
-        }
-    }
+    /** 查询真实 CDN URL（委托给 ApiClient，在 IO 线程调用）。 */
+    private fun resolveCdnUrl(song: Song): String? = ApiClient.resolveDirectStreamUrl(song)
 
     /** 将 ExoPlayer 队列中指定位置的 mediaItem 替换为预解析后的版本 */
     private fun replaceMediaItemCached(exoPlayer: Player, index: Int, song: Song) {
@@ -516,6 +500,11 @@ class PlaybackController(context: Context) {
             }
             isProgrammaticSkip = false
             savePlaybackState()
+            // 切歌后继续解析剩余歌曲的 CDN 直链(若用户跳播,从当前位置开始)
+            val p = player
+            if (p != null && currentPlaylist.isNotEmpty()) {
+                preResolveAllRemaining(currentPlaylist, p.currentMediaItemIndex, p)
+            }
         }
         override fun onMediaMetadataChanged(mediaMetadata: androidx.media3.common.MediaMetadata) = refreshFromController()
         override fun onShuffleModeEnabledChanged(shuffleModeEnabled: Boolean) {

@@ -34,6 +34,7 @@ class MusicDlApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        CrashHandler.init(this)
         com.musicdl.car.playback.PlaybackLogger.init(this)
 
         startServer()
